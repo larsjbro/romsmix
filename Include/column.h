@@ -12,7 +12,7 @@
 ** Input script:       roms_column.in
 */
 
-#define UV_COR
+#undef UV_COR
 #define UV_QDRAG
 #define DJ_GRADPS
 #define SPLINES_VDIFF

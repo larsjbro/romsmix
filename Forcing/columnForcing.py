@@ -20,6 +20,10 @@ for varname in frcvar:
     var = f.variables[varname]
     var[:] = 0.0
 
+# Setting constant stress in x-direction
+sustr = f.variables['sustr']
+sustr[:] = 0.1
+
 # Set time variable, the end time is the important one.
 #
 # NOTE! If time varying input, which requires more than two
@@ -27,7 +31,7 @@ for varname in frcvar:
 # the start of "roms_frc.cdl".
 #
 ot = f.variables['ocean_time']
-ot[:] = [0.0,1200.0] 
+ot[:] = [0.0,48*3600.0] 
 
 # Sync file to force write, then close.
 f.sync()

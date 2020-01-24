@@ -21,8 +21,6 @@
 #define SALINITY
 #define SOLVE3D
 
-
-
 #define LMD_MIXING
 #ifdef LMD_MIXING
 # define LMD_RIMIX
@@ -36,7 +34,7 @@
 
 #define LONGWAVE_OUT
 
-#define ANA_INITIAL
+#undef ANA_INITIAL
 #define ANA_BSFLUX
 #define ANA_BTFLUX
 #define ANA_GRID

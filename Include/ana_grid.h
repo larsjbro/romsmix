@@ -228,11 +228,17 @@
 !     beta     Coriolis parameter, beta-plane constant (1/s/m).
 !-----------------------------------------------------------------------
 !
-#if defined COLUMN
+#if defined COLUMN_F
       Xsize=1.0E+05_r8
       Esize=1.2E+05_r8
       depth=200.0_r8
-      f0=1.4E-04_r8
+      f0=1.263E-04_r8
+      beta=0.0_r8
+#elif defined COLUMN_NO_F
+      Xsize=1.0E+05_r8
+      Esize=1.2E+05_r8
+      depth=200.0_r8
+      f0=0.0E-04_r8
       beta=0.0_r8
 #elif defined BASIN
       Xsize=3600.0E+03_r8

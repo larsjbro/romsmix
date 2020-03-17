@@ -12,16 +12,19 @@
 ** Input script:       roms_column.in
 */
 
-#undef UV_COR
+#define UV_COR
 #define UV_QDRAG
 #define DJ_GRADPS
 #define SPLINES_VDIFF
 #define SPLINES_VVISC
-#define NONLIN_EOS
+#undef NONLIN_EOS
 #define SALINITY
 #define SOLVE3D
 
-#define LMD_MIXING
+#ifdef COLUMN_CONST_MIX
+# define ANA_VMIX
+#endif
+
 #ifdef LMD_MIXING
 # define LMD_RIMIX
 # define LMD_CONVEC
@@ -32,9 +35,15 @@
 # define RI_SPLINES
 #endif
 
+#ifdef GLS_MIXING
+# define CRAIG_BANNER
+# define CANUTO_A           
+#endif
+
+
 #define LONGWAVE_OUT
 
-#undef ANA_INITIAL
+#define ANA_INITIAL
 #define ANA_BSFLUX
 #define ANA_BTFLUX
 #define ANA_GRID

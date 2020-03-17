@@ -5,8 +5,8 @@ import numpy as np
 import os
 
 # Generate empty forcing file and open for editing
-os.system('ncgen -b roms_frc.cdl')
-f = Dataset('roms_frc.nc', 'a')
+os.system('ncgen -b roms_flux.cdl')
+f = Dataset('roms_flux.nc', 'a')
 
 # Make list of forcing variables to set (must match "roms_frc.cdl"!)
 frcvar = ['swrad', 'shflux', 'swflux', 'sustr', 'svstr']
@@ -22,7 +22,7 @@ for varname in frcvar:
 
 # Setting constant stress in x-direction
 sustr = f.variables['sustr']
-sustr[:] = 0.1
+sustr[:] = 0.2
 
 # Set time variable, the end time is the important one.
 #
@@ -36,3 +36,7 @@ ot[:] = [0.0,48*3600.0]
 # Sync file to force write, then close.
 f.sync()
 f.close()
+
+# Rename file
+os.system('mv roms_flux.nc roms_frc.nc')
+

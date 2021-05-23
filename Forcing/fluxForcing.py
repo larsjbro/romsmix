@@ -1,5 +1,8 @@
+<<<<<<< HEAD
 #!/usr/bin/python3
 
+=======
+>>>>>>> 838a09f23632c658f64b8f242f843260c659b4b7
 from netCDF4 import Dataset
 import numpy as np
 import os

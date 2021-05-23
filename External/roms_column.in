@@ -1,9 +1,9 @@
 !
 !  ROMS/TOMS Standard Input parameters.
 !
-!svn $Id: roms.in 1009 2020-03-03 20:38:52Z arango $
+!svn $Id: roms_adria02.in 1064 2021-05-10 19:55:56Z arango $
 !========================================================= Hernan G. Arango ===
-!  Copyright (c) 2002-2020 The ROMS/TOMS Group                                !
+!  Copyright (c) 2002-2021 The ROMS/TOMS Group                                !
 !    Licensed under a MIT/X style license                                     !
 !    See License_ROMS.txt                                                     !
 !==============================================================================
@@ -221,7 +221,7 @@ ad_VolCons(north) ==  F                            ! northern boundary
 
 ! Time-Stepping parameters.
 
-      NTIMES == 288
+      NTIMES == 1008
           DT == 600.0d0
      NDTFAST == 10
 
@@ -237,6 +237,7 @@ ad_VolCons(north) ==  F                            ! northern boundary
        ERend =  1
       Nouter =  1
       Ninner =  1
+     Nsaddle =  1
   Nintervals =  1
 
 ! Number of eigenvalues (NEV) and eigenvectors (NCV) to compute for the
@@ -250,7 +251,7 @@ ad_VolCons(north) ==  F                            ! northern boundary
 
        NRREC == 0
    LcycleRST == T
-        NRST == 288
+        NRST == 144
         NSTA == 1
         NFLT == 1
        NINFO == 1
@@ -348,19 +349,19 @@ LtracerSponge == F F                            ! temperature, salinity, inert
 
 ! Generic length-scale turbulence closure parameters.
 
-       GLS_P == 3.0d0                           ! K-epsilon
-       GLS_M == 1.5d0
-       GLS_N == -1.0d0
-    GLS_Kmin == 7.6d-6
+       GLS_P == 2.0d0                           ! MET setup
+       GLS_M == 1.0d0
+       GLS_N == -0.67d0
+    GLS_Kmin == 1.0d-10
     GLS_Pmin == 1.0d-12
 
-    GLS_CMU0 == 0.5477d0
-      GLS_C1 == 1.44d0
-      GLS_C2 == 1.92d0
-     GLS_C3M == -0.4d0
+    GLS_CMU0 == 0.5544d0
+      GLS_C1 == 1.0d0
+      GLS_C2 == 1.22d0
+     GLS_C3M == 0.1d0
      GLS_C3P == 1.0d0
-    GLS_SIGK == 1.0d0
-    GLS_SIGP == 1.30d0
+    GLS_SIGK == 0.8d0
+    GLS_SIGP == 1.07d0
 
 ! Constants used in surface turbulent kinetic energy flux computation.
 
@@ -883,7 +884,70 @@ Dout(iTvdif) == T T     ! temp_vdiff, ...    vertical diffusion
        NUSER =  0
         USER =  0.d0
 
-! NetCDF-4/HDF5 compression parameters for output files.
+! Input and Output files processing library to use:
+!
+!   [1] Standard NetCDF-3 or NetCDF-4 library
+!   [2] Serial or Parallel I/O with Parallel-IO (PIO) library (MPI only)
+
+     INP_LIB =  1
+     OUT_LIB =  1
+
+! PIO library methods for reading/writing NetCDF files:
+!
+!   [0] parallel read and write of PnetCDF (CDF-5, not recommended)
+!   [1] parallel read and write of NetCDF3 (64-bit offset)
+!   [2] serial   read and write of NetCDF3 (64-bit offset)
+!   [3] parallel read and serial write of NetCDF4/HDF5
+!   [4] parallel read and write of NETCDF4/HDF5
+
+  PIO_METHOD =  2
+
+! PIO library MPI processes set-up:
+
+ PIO_IOTASKS =  1                 ! number of I/O tasks to define
+  PIO_STRIDE =  1                 ! stride in the MPI-ran between I/O tasks
+    PIO_BASE =  0                 ! offset for the first I/O task
+  PIO_AGGREG =  1                 ! number of MPI-aggregators to use
+
+! PIO library rearranger methods for moving data between computational and I/O
+! processes:
+!
+!   [1] Box rearrangement
+!   [2] Subset rearrangement
+
+   PIO_REARR =  1
+
+! PIO library rearranger flag for MPI communications between computational
+! and I/O processes:
+!
+!   [0] Point-to-Point (low-level communications)
+!   [1] Collective (high-level grouped communications)
+
+PIO_REARRCOM =  0
+
+! PIO library rearranger flow control direction flag for MPI communications
+! between computational and I/O processes:
+!
+!   [0] Enable computational to I/O processes, and vice versa
+!   [2] Enable computational to I/O processes only
+!   [3] Enable I/O to computational processes only
+!   [4] Disable flow control
+
+PIO_REARRDIR = 0
+
+! PIO rearranger options for computational to I/O processes (C2I):
+
+  PIO_C2I_HS = T                  ! Enable C2I handshake (T/F)
+PIO_C2I_Send = T                  ! Enable C2I Isends (T/F)
+PIO_C2I_Preq = 64                 ! Maximum pending C2I requests
+
+! PIO rearranger options for I/O to computational processes (I2C):
+
+  PIO_I2C_HS = T                  ! Enable I2C handshake (T/F)
+PIO_I2C_Send = T                  ! Enable I2C Isends (T/F)
+PIO_I2C_Preq = 65                 ! Maximum pending I2C requests
+
+! If OUT_LIB=1, NetCDF-4/HDF5 compression parameters for output files.
 
   NC_SHUFFLE =  1                 ! if non-zero, turn on shuffle filter
   NC_DEFLATE =  1                 ! if non-zero, turn on deflate filter
@@ -924,13 +988,28 @@ Dout(iTvdif) == T T     ! temp_vdiff, ...    vertical diffusion
 
      NGCNAME =  roms_ngc.nc
 
-! Input lateral boundary conditions and climatology file names.  The
-! USER has the option to split input data time records into several
-! NetCDF files (see prologue instructions above). If so, use a single
-! line per entry with a vertical bar (|) symbol after each entry,
-! except the last one.
+! Input lateral boundary conditions file names. The USER has the option
+! to separate the required lateral boundary variables into individual
+! NetCDF files (NBCFILES > 1), as in the input surface forcing.  Also,
+! the USER may split input data time records into several NetCDF files
+! (monthly, seasonal, or annual). See prologue instructions above. Use
+! a single line per entry with a continuation (\) or a vertical bar (|)
+! symbol after each entry, except the last one.
+
+    NBCFILES == 1                          ! number of boundary files
 
      BRYNAME == roms_bry.nc
+
+! Input climatology file names. The USER has the option to separate the
+! climatology variables into individual NetCDF files (NCLMFILES > 1),
+! as in the input surface forcing.  Also, the USER may split input data
+! time records into several NetCDF files (monthly, seasonal, or annual).
+! See prologue instructions above. Use a single line per entry with a
+! continuation (\) or a vertical bar (|) symbol after each entry, except
+! the last one.
+
+   NCLMFILES == 1                          ! number of climatology files
+
      CLMNAME == roms_clm.nc
 
 ! Input climatology nudging coefficients file name.
@@ -1332,11 +1411,11 @@ Dout(iTvdif) == T T     ! temp_vdiff, ...    vertical diffusion
 !
 ! NTIMES_ANA   Total number of timesteps for computing observations impacts
 !                interval during the analysis cycle. It is only used when
-!                W4DPSAS_FCT_SENSITIVITY is activated.
+!                RBL4DVAR_FCT_SENSITIVITY is activated.
 !
 ! NTIMES_FCT   Total number of timesteps for computing observations impacts
 !                interval during the forecast cycle. It is only used when
-!                W4DPSAS_FCT_SENSITIVITY is activated.
+!                RBL4DVAR_FCT_SENSITIVITY is activated.
 !
 !------------------------------------------------------------------------------
 ! Model iteration loops parameters.
@@ -2788,8 +2867,9 @@ Dout(iTvdif) == T T     ! temp_vdiff, ...    vertical diffusion
 !
 !  ADSNAME     Input adjoint sensitivity functional filename.
 !
+!
 ! Input adjoint forcing filenames for computing observations impacts
-! during the analysis-forecast cycle when W4DPSAS_FCT_SENSITIVITY is
+! during the analysis-forecast cycle when RBL4DVAR_FCT_SENSITIVITY is
 ! activated.  The files FOInameA and FOInameB are used when the forecast
 ! metric is defined in state-space (CPP option OBS_SPACE is off). Both
 ! are regular adjoint forcing files just like ADSname.
@@ -2800,12 +2880,14 @@ Dout(iTvdif) == T T     ! temp_vdiff, ...    vertical diffusion
 !
 !  FOInameB    Forecast initialized with 4D_Var background (blue curve)
 !
+!
 ! Input NetCDF filenames for the forecasts initialized from the 4D-Var
 ! analysis files:
 !
 !  FCTnameA    Current  4D-Var analysis cycle (red curve)
 !
 !  FCTnameB    Previous 4D-Var analysis cycle (blue curve)
+!
 !
 ! Nesting grids connectivity data:
 !
@@ -2823,21 +2905,50 @@ Dout(iTvdif) == T T     ! temp_vdiff, ...    vertical diffusion
 !                for more information.
 !
 !
-! Input lateral boundary conditions and climatology filenames:
+! Input lateral boundary conditions file(s) name:
 !
-! BRYNAME      Input open boundary data filename(s) per nested grid.
+!  NBCFILES    Number of unique boundary files per nested grid.
 !
-! CLMNAME      Input climatology fields filename(s) per nested grid
+!  BRYNAME     Input open boundary data filename(s) per nested grid.
 !
-!  The USER has the option to split input data time records into several
-!  NetCDF files, as many as required. If so, use a single line per entry
-!  with a vertical bar (|) symbol after each entry, except the last one:
+!  The USER has the option to enter several filenames for the lateral
+!  boundary conditions variables and or split input data time records for
+!  each nested grid. For example, the USER may have different files for
+!  physical, biology, and sediment state variables. The model will scan
+!  the file list and will read the needed data from the first file in the
+!  list containing the lateral boundary variable. Therefore, the order of
+!  the filenames is critical. It is also possible to split input data
+!  time records into several NetCDF files.
 !
-!    BRYNAME == my_bry_year1.nc |
-!               my_bry_year2.nc
+!    NBCFILES == 2                            ! number of boundary files
 !
-!    CLMNAME == my_clm_year1.nc |
-!               my_clm_year2.nc
+!     BRYNAME == my_physics_bry_year1.nc |    ! physical kernel variables
+!                my_physics_bry_year2.nc \
+!                my_biology_bry_year1.nc |    ! biological tracers
+!                my_biology_bry_year2.nc
+!
+!
+! Input climatology file(s) name:
+!
+!  NCLMFILES   Number of unique climatology files per nested grid.
+!
+!  CLMNAME     Input climatology data filename(s) per nested grid.
+!
+!  The USER has the option to enter several filenames for the climatology
+!  variables and or split input data time records for each nested grid.
+!  For example, the USER may have different files for physical, biology,
+!  and sediment state variables. The model will scan the file list and
+!  will read the needed data from the first file in the list containing
+!  the lateral climatology variable. Therefore, the order of the filenames
+!  is critical. It is also possible to split input data time records into
+!  several NetCDF files.
+!
+!    NCLMFILES == 2                           ! number of climatology files
+!
+!      CLMNAME == my_physics_clm_year1.nc |   ! physical kernel variables
+!                 my_physics_bry_year2.nc \
+!                 my_biology_bry_year1.nc |   ! biological tracers
+!                 my_biology_bry_year2.nc
 !
 !
 ! Input nudging coefficients filename:
@@ -2877,6 +2988,7 @@ Dout(iTvdif) == T T     ! temp_vdiff, ...    vertical diffusion
 !                are written into this NetCDF file to facilitate restart for
 !                during long fitting simulations.
 !
+!
 ! Input forcing file(s) name:
 !
 ! NFFILES      Number of unique forcing files per nested grid.
@@ -2884,12 +2996,12 @@ Dout(iTvdif) == T T     ! temp_vdiff, ...    vertical diffusion
 ! FRCNAME      Input forcing fields filename per nested grid.
 !
 !  The USER has the option to enter several filenames for forcing fields
-!  and/or split input data time records for each nested grid. For example,
+!  and or split input data time records for each nested grid. For example,
 !  the USER may have different files for wind products, heat fluxes, etc.
 !  The model will scan the file list and will read the needed data from
 !  the first file in the list containing the forcing field. Therefore,
-!  the order of the filenames is very important. It is also possible to
-!  split input data time records into several NetCDF files.
+!  the order of the filenames is essential. It is also possible to split
+!  input data time records into several NetCDF files.
 !
 !  Use a single line per entry with a continuation (\) or vertical bar (|)
 !  symbol after each entry, except the last one:

@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 
 from netCDF4 import Dataset
 import numpy as np
@@ -16,13 +16,17 @@ frcvar = ['swrad', 'shflux', 'swflux', 'sustr', 'svstr']
 # NOTE! For more advanced input, edit yourself.
 #
 for varname in frcvar:
-    print varname
+    print(varname)
     var = f.variables[varname]
     var[:] = 0.0
 
 # Setting constant stress in x-direction
 sustr = f.variables['sustr']
-sustr[:] = 0.2
+sustr[:] = 0.05 
+
+# Setting constant cooling
+shflux = f.variables['shflux']
+shflux[:] = -50.0
 
 # Set time variable, the end time is the important one.
 #
@@ -31,7 +35,7 @@ sustr[:] = 0.2
 # the start of "roms_frc.cdl".
 #
 ot = f.variables['ocean_time']
-ot[:] = [0.0,48*3600.0] 
+ot[:] = [0.0,7*24*3600.0] 
 
 # Sync file to force write, then close.
 f.sync()

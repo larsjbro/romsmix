@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 
 from netCDF4 import Dataset
 import numpy as np

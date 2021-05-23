@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# svn $Id: build_roms.bash 977 2019-07-26 06:01:07Z arango $
+# svn $Id: build_roms.sh 1064 2021-05-10 19:55:56Z arango $
 #::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
-# Copyright (c) 2002-2019 The ROMS/TOMS Group                           :::
+# Copyright (c) 2002-2021 The ROMS/TOMS Group                           :::
 #   Licensed under a MIT/X style license                                :::
 #   See License_ROMS.txt                                                :::
 #::::::::::::::::::::::::::::::::::::::::::::::::::::: Hernan G. Arango :::
 #                                                                       :::
-# ROMS/TOMS Compiling BASH Script                                       :::
+# ROMS Compiling BASH Script                                            :::
 #                                                                       :::
 # Script to compile an user application where the application-specific  :::
 # files are kept separate from the ROMS source code.                    :::
@@ -25,7 +25,7 @@
 #                                                                       :::
 # Usage:                                                                :::
 #                                                                       :::
-#    ./build_roms.bash [options]                                        :::
+#    ./build_roms.sh [options]                                          :::
 #                                                                       :::
 # Options:                                                              :::
 #                                                                       :::
@@ -34,7 +34,7 @@
 #                                                                       :::
 #    -p macro    Prints any Makefile macro value. For example,          :::
 #                                                                       :::
-#                  build.bash -p FFLAGS                                 :::
+#                  build_roms.sh -p FFLAGS                              :::
 #                                                                       :::
 #    -noclean    Do not clean already compiled objects                  :::
 #                                                                       :::
@@ -43,13 +43,13 @@
 #                                                                       :::
 #::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 
-which_MPI=openmpi                             # default, overwritten below
+export which_MPI=openmpi                       # default, overwritten below
 
 parallel=0
 clean=1
 dprint=0
 
-MY_CPP_FLAGS=
+export MY_CPP_FLAGS=
 
 while [ $# -gt 0 ]
 do
@@ -89,7 +89,7 @@ do
       echo "              omit argument for all avaliable CPUs"
       echo ""
       echo "-p macro    Prints any Makefile macro value"
-      echo "              For example:  build.bash -p FFLAGS"
+      echo "              For example:  build_roms.sh -p FFLAGS"
       echo ""
       echo "-noclean    Do not clean already compiled objects"
       echo ""
@@ -132,11 +132,6 @@ export     MY_PROJECT_DIR=${PWD}
 
 #--------------------------------------------------------------------------
 # Set tunable CPP options.
-#
-# 4D-Var Tutorial: https://www.myroms.org/wiki/4DVar_Tutorial_Introduction
-#                  Exercise 03 and Exercise 04
-#
-#         Results: https://www.myroms.org/wiki/PSAS_Tutorial
 #--------------------------------------------------------------------------
 #
 # Sometimes it is desirable to activate one or more CPP options to run
@@ -154,12 +149,16 @@ export     MY_PROJECT_DIR=${PWD}
 #export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DDEBUGGING"
 
 
-# Here you choose whether or not there is stratification. If COLUMN_STRAT is 
-# activated, ROMS is configured with a linear stratification. NOTE: hardcoded
-# depth, see ana_initial.h.
+# Here you choose whether or not to use analytical initial conditions, with zero 
+# velocities and either linear stratification or constant density. 
+# If COLUMN_STRAT is activated, ROMS is configured with a linear stratification. 
+# NOTE: hardcoded depth, see ana_initial.h.
 #
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_STRAT"
- export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_STRAT"
+# If none of the two options below are activated ROMS will demand an initial 
+# conditions file "roms_ini.nc" in the directory where the model is run.
+#
+     export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_STRAT"
+# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_STRAT"
 #
 
 # Here you choose whether or not rotational effects should be included.
@@ -171,8 +170,8 @@ export     MY_PROJECT_DIR=${PWD}
 
 # Here you choose what turbulence scheme to use. 
 #
-# Analytical constant viscosity and diffusivity
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_CONST_MIX"
+# Analytical constant viscosity and diffusivity (values are set in ana_vmix.h)
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_CONST_MIX"
 #
 # The Richardson number based scheme:
 # export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DBVF_MIXING"
@@ -181,7 +180,7 @@ export     MY_PROJECT_DIR=${PWD}
 # export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DLMD_MIXING"
 #
 # The general length scale scheme:
- export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DGLS_MIXING"
+# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DGLS_MIXING"
 #
 
 #--------------------------------------------------------------------------
@@ -196,8 +195,10 @@ export     MY_PROJECT_DIR=${PWD}
 
 #export           USE_MPI=on            # distributed-memory parallelism
 #export        USE_MPIF90=on            # compile with mpif90 script
+#export         which_MPI=intel         # compile with mpiifort library
 #export         which_MPI=mpich         # compile with MPICH library
 #export         which_MPI=mpich2        # compile with MPICH2 library
+#export         which_MPI=mvapich2      # compile with MVAPICH2 library
 #export         which_MPI=openmpi       # compile with OpenMPI library
 
 #export        USE_OpenMP=on            # shared-memory parallelism
@@ -208,9 +209,22 @@ export     MY_PROJECT_DIR=${PWD}
 
 #export         USE_DEBUG=on            # use Fortran debugging flags
  export         USE_LARGE=on            # activate 64-bit compilation
+
+# ROMS I/O choices and combinations. A more complete description of the
+# available options can be found in the wiki (https://myroms.org/wiki/IO).
+# Most users will want to enable at least USE_NETCDF4 because that will
+# instruct the ROMS build system to use nf-config to determine the
+# necessary libraries and paths to link into the ROMS executable.
+
  export       USE_NETCDF4=on            # compile with NetCDF-4 library
- export          USE_HDF5=on            # compile with HDF5 library
 #export   USE_PARALLEL_IO=on            # Parallel I/O with NetCDF-4/HDF5
+#export           USE_PIO=on            # Parallel I/O with PIO library
+#export       USE_SCORPIO=on            # Parallel I/O with SCORPIO library
+
+# If any of the coupling component use the HDF5 Fortran API for primary
+# I/O, we need to compile the main driver with the HDF5 library.
+
+#export          USE_HDF5=on            # compile with HDF5 library
 
 #--------------------------------------------------------------------------
 # If Earth System Model (ESM) coupling, set location of ESM component
@@ -245,7 +259,7 @@ fi
  export USE_MY_LIBS=no            # use system default library paths
 #export USE_MY_LIBS=yes           # use my customized library paths
 
-MY_PATHS=${COMPILERS}/my_build_paths.bash
+MY_PATHS=${COMPILERS}/my_build_paths.sh
 
 if [ "${USE_MY_LIBS}" = "yes" ]; then
   source ${MY_PATHS} ${MY_PATHS}

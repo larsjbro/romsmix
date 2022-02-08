@@ -1,0 +1,61 @@
+netcdf roms_bulkforce {
+
+dimensions:
+	xi_rho = 12 ;
+	xi_u = 11 ;
+	xi_v = 12 ;
+	xi_psi = 11 ;
+	eta_rho = 14 ;
+	eta_u = 14 ;
+	eta_v = 13 ;
+	eta_psi = 13 ;
+	ocean_time = 169 ; // (3 currently)
+variables:
+	double ocean_time(ocean_time) ;
+		ocean_time:long_name = "atmospheric forcing time" ;
+		ocean_time:units = "modified Julian day" ;
+    float cloud(ocean_time, eta_rho, xi_rho) ;
+        cloud:standard_name = "cloud_area_fraction" ;
+        cloud:units = "1" ;
+		cloud:time = "ocean_time" ;
+	float Uwind(ocean_time, eta_rho, xi_rho) ;
+		Uwind:long_name = "surface u-wind component" ;
+		Uwind:units = "meter second-1" ;
+		Uwind:time = "ocean_time" ;
+	float Vwind(ocean_time, eta_rho, xi_rho) ;
+		Vwind:long_name = "surface v-wind component" ;
+		Vwind:units = "meter second-1" ;
+		Vwind:time = "ocean_time" ;
+	float Pair(ocean_time, eta_rho, xi_rho) ;
+		Pair:long_name = "surface air pressure" ;
+		Pair:units = "millibar" ;
+		Pair:time = "ocean_time" ;
+	float Tair(ocean_time, eta_rho, xi_rho) ;
+		Tair:long_name = "surface air temperature" ;
+		Tair:units = "Celsius" ;
+		Tair:time = "ocean_time" ;
+	float Qair(ocean_time, eta_rho, xi_rho) ;
+		Qair:long_name = "surface air relative humidity" ;
+		Qair:units = "percentage" ;
+		Qair:time = "ocean_time" ;
+	float rain(ocean_time, eta_rho, xi_rho) ;
+		rain:long_name = "rain fall rate" ;
+		rain:units = "kilogram meter-2 second-1" ;
+		rain:time = "ocean_time" ;
+	float swrad(ocean_time, eta_rho, xi_rho) ;
+		swrad:long_name = "solar shortwave radiation" ;
+		swrad:units = "Watts meter-2" ;
+		swrad:positive_value = "downward flux, heating" ;
+		swrad:negative_value = "upward flux, cooling" ;
+		swrad:time = "ocean_time" ;
+	float lwrad(ocean_time, eta_rho, xi_rho) ;
+		lwrad:long_name = "net longwave radiation flux" ;
+		lwrad:units = "Watts meter-2" ;
+		lwrad:positive_value = "downward flux, heating" ;
+		lwrad:negative_value = "upward flux, cooling" ;
+		lwrad:time = "ocean_time" ;
+
+// global attributes:
+		:type = "Bulk forcing file" ;
+		:title = "Column model for turbulence scheme testing" ;
+}

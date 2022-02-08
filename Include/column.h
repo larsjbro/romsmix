@@ -6,7 +6,6 @@
 **   See License_ROMS.txt                                                    **
 *******************************************************************************
 **
-** Options for K-Profile Parameterization Test.
 **
 ** Application flag:   COLUMN
 ** Input script:       roms_column.in
@@ -42,10 +41,9 @@
 # define SPLINES_VDIFF
 # define SPLINES_VVISC
 # define CRAIG_BANNER
-# define CANUTO_A           
+# undef CANUTO_A           
+# define KANTHA_CLAYSON     
 #endif
-
-#define LONGWAVE_OUT
 
 #define ANA_BSFLUX
 #define ANA_BTFLUX

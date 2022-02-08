@@ -8,7 +8,7 @@ dimensions:
 	eta_u = 14 ;
 	eta_v = 13 ;
 	eta_psi = 13 ;
-	ocean_time = 2 ; // (2 currently)
+	ocean_time = 169 ; // (3 currently)
 variables:
 	double ocean_time(ocean_time) ;
 		ocean_time:long_name = "time since initialization" ;

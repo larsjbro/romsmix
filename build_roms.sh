@@ -157,21 +157,21 @@ export     MY_PROJECT_DIR=${PWD}
 # If none of the two options below are activated ROMS will demand an initial 
 # conditions file "roms_ini.nc" in the directory where the model is run.
 #
-     export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_STRAT"
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_STRAT"
+# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_STRAT"
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_STRAT"
 #
 
 # Here you choose whether or not rotational effects should be included.
 # If COLUMN_F is activated, ROMS is configured for an f-plane at 60N.
 #
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_F"
- export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_F"
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_F"
+# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_F"
 #
 
 # Here you choose what turbulence scheme to use. 
 #
 # Analytical constant viscosity and diffusivity (values are set in ana_vmix.h)
- export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_CONST_MIX"
+# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_CONST_MIX"
 #
 # The Richardson number based scheme:
 # export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DBVF_MIXING"
@@ -180,7 +180,15 @@ export     MY_PROJECT_DIR=${PWD}
 # export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DLMD_MIXING"
 #
 # The general length scale scheme:
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DGLS_MIXING"
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DGLS_MIXING"
+#
+
+# Set ROMS to use bulk fluxes.
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DSOLAR_SOURCE"
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DATM_PRESS"
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DBULK_FLUXES"
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DLONGWAVE"
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DEMINUSP"
 #
 
 #--------------------------------------------------------------------------

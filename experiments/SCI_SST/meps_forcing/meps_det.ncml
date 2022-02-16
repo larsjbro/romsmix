@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<netcdf xmlns="http://www.unidata.ucar.edu/namespaces/netcdf/ncml-2.2"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.unidata.ucar.edu/namespaces/netcdf/ncml-2.2 http://www.unidata.ucar.edu/schemas/netcdf/ncml-2.2.xsd">
+
+<!-- CHANGE DIMENSION NAMES -->
+<dimension name="xi_rho" orgName="x" />
+<dimension name="eta_rho" orgName="y" />
+
+<!-- CHANGE VARIABLE ATTRIBUTES ETC -->
+<variable name="time">
+  <attribute name="units" type="String" value="days since 1970-01-01 00:00:00" />
+</variable>
+
+<variable name="Uwind" orgName="x_wind_10m">
+  <attribute name="long_name" value="surface u-wind component" />
+  <remove type="attribute" name="coordinates" />
+</variable>
+
+<variable name="Vwind" orgName="y_wind_10m">
+  <attribute name="long_name" value="surface v-wind component" />
+  <remove type="attribute" name="coordinates" />
+</variable>
+
+<variable name="Tair" orgName="air_temperature_2m">
+  <attribute name="long_name" value="surface air temperature" />
+  <remove type="attribute" name="coordinates" />
+</variable>
+
+<variable name="Pair" orgName="air_pressure_at_sea_level">
+  <attribute name="long_name" value="surface air pressure" />
+  <remove type="attribute" name="coordinates" />
+</variable>
+
+<variable name="cloud" orgName="cloud_area_fraction">
+  <attribute name="long_name" value="cloud fraction" />
+  <remove type="attribute" name="coordinates" />
+</variable>
+
+<variable name="Qair" orgName="relative_humidity_2m">
+  <attribute name="long_name" value="surface air relative humidity" />
+  <remove type="attribute" name="coordinates" />
+</variable>
+
+<variable name="rain" orgName="rainfall_amount">
+  <attribute name="long_name" value="rain fall rate" />
+  <remove type="attribute" name="coordinates" />
+</variable>
+
+<variable name="swrad" orgName="surface_downwelling_shortwave_flux_in_air">
+  <attribute name="long_name" value="solar shortwave radiation flux" />
+  <remove type="attribute" name="coordinates" />
+</variable>
+
+<variable name="lwrad_down" orgName="surface_downwelling_longwave_flux_in_air">
+  <attribute name="long_name" value="downwelling longwave radiation flux" />
+  <remove type="attribute" name="coordinates" />
+</variable>
+
+<!-- REMOVE UNNECESSARY DIMENSIONS, VARIABLES, ATTRIBUTES -->
+<!-- Dimensions height1, height0, height3 and height_above_msl are removed later using ncwa: -->
+<remove type="variable" name="x" />
+<remove type="variable" name="y" />
+<remove type="variable" name="height_above_msl" />
+<remove type="variable" name="height1" />
+<remove type="variable" name="height0" />
+<remove type="variable" name="height7" />
+
+<remove type="dimension" name="pressure" />
+<remove type="dimension" name="height2" />
+<remove type="dimension" name="hybrid0" />
+<remove type="dimension" name="hybrid1" />
+<remove type="dimension" name="grib1_vLevel200" />
+<remove type="dimension" name="grib1_vLevel5" />
+<remove type="dimension" name="grib1_vLevel8" />
+<remove type="dimension" name="p0" />
+
+<!-- ADD COMMENTS ABOUT SOURCE -->
+<attribute name="comment" value="Made for norkyst_v3 by MET Norway" />
+
+</netcdf>

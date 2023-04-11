@@ -1,3 +1,4 @@
+#!/home/kaihc/miniconda3/envs/roms/bin/python
 import numpy as np
 import argparse
 from matplotlib import pyplot as plt
@@ -24,7 +25,7 @@ gls = f.variables['gls'][:,:,7,6]
 # Get time
 otime = f.variables['ocean_time'][:]
 otime = otime/(24*3600.)
-dt = np.array([otime,]*401).transpose()
+dt = np.array([otime,]*43).transpose()
 
 # Open figure
 plt.figure()

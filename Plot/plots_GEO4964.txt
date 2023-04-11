@@ -1,0 +1,22 @@
+run plot_hodograph.py ../Run/GEO4964/roms_his.nc-nomix_no_f
+
+run plot_hodograph.py ../Run/GEO4964/roms_his.nc-nomix_f
+
+run plot_density_profiles.py ../Run/GEO4964/roms_his.nc-nomix_no_f ../Run/GEO4964/roms_his.nc-nomix_f
+
+run plot_density_hovmuller.py ../Run/GEO4964/roms_his.nc-kpp_no_f 
+
+run plot_density_hovmuller.py ../Run/GEO4964/roms_his.nc-kpp_f 
+
+run plot_hodograph.py ../Run/GEO4964/roms_his.nc-gls_f ../Run/GEO4964/roms_his.nc-kpp_f
+
+run plot_density_hovmuller.py ../Run/GEO4964/roms_his.nc-kpp_f
+
+run plot_density_hovmuller.py ../Run/GEO4964/roms_his.nc-gls_f
+
+run plot_density_profiles.py ../Run/GEO4964/roms_his.nc-gls_f ../Run/GEO4964/roms_his.nc-kpp_f
+
+run plot_density_profiles.py ../Run/GEO4964/roms_his.nc-gls_cooling ../Run/GEO4964/roms_his.nc-kpp_cooling
+
+
+

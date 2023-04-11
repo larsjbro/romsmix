@@ -1,3 +1,4 @@
+#!/home/kaihc/miniconda3/envs/roms/bin/python
 import numpy as np
 import argparse
 from matplotlib import pyplot as plt
@@ -24,16 +25,16 @@ akv = f.variables['AKv'][:,:,7,6]
 # Get time
 otime = f.variables['ocean_time'][:]
 otime = otime/(24*3600.)
-dt = np.array([otime,]*401).transpose()
+dt = np.array([otime,]*43).transpose()
 
 # Open figure
 plt.figure()
 
 # Plot filled contours
-plt.contourf(dt,z_w,np.log(akv),vmax=-1.5,vmin=-12)
+plt.contourf(dt,z_w,np.log(akv))
 
 # Add info 
-plt.colorbar(label='Eddy viscosity [m^2/s]')
+plt.colorbar(label='Log eddy viscosity [m^2/s]')
 plt.xlabel('Days')
 plt.ylabel('Depth [m]')
 plt.show()

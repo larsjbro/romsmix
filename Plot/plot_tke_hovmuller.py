@@ -25,7 +25,7 @@ tke = f.variables['tke'][:,:,7,6]
 # Get time
 otime = f.variables['ocean_time'][:]
 otime = otime/(24*3600.)
-dt = np.array([otime,]*401).transpose()
+dt = np.array([otime,]*43).transpose()
 
 # Open figure
 plt.figure()

@@ -1,3 +1,4 @@
+#!/home/kaihc/miniconda3/envs/roms/bin/python
 import numpy as np
 import argparse
 from matplotlib import pyplot as plt
@@ -28,13 +29,14 @@ speed[speed>0.2] = 0.2
 # Get time
 otime = f.variables['ocean_time'][:]
 otime = otime/(24*3600.)
-dt = np.array([otime,]*400).transpose()
+dt = np.array([otime,]*42).transpose()
 
 # Open figure
 plt.figure()
 
 # Plot filled contours
-plt.contourf(dt,z_r,speed,levels=np.logspace(-6,0,25),norm=colors.LogNorm())
+#plt.contourf(dt,z_r,speed,levels=np.logspace(-6,0,25),norm=colors.LogNorm())
+plt.contourf(dt,z_r,speed,25)
 
 # Add info 
 plt.colorbar(label='Speed [m/s]')

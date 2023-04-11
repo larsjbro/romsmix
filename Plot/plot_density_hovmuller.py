@@ -27,7 +27,7 @@ rho = f.variables['rho'][:,:,7,6]
 # Get time
 otime = f.variables['ocean_time'][:]
 otime = otime/(24*3600.)
-dt = np.array([otime,]*400).transpose()
+dt = np.array([otime,]*42).transpose()
 
 # Check if we should limit range
 if args.maxdensity > 0.0:

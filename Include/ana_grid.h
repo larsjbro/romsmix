@@ -228,7 +228,13 @@
 !     beta     Coriolis parameter, beta-plane constant (1/s/m).
 !-----------------------------------------------------------------------
 !
-#if defined COLUMN_F
+#if defined NORSHELF
+      Xsize=2.4E+04_r8
+      Esize=2.88E+04_r8
+      depth=660.0_r8
+      f0=1.263E-04_r8
+      beta=0.0_r8
+#elif defined COLUMN_F
       Xsize=1.0E+05_r8
       Esize=1.2E+05_r8
       depth=200.0_r8

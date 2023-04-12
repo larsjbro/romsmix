@@ -27,7 +27,7 @@ rho = f.variables['rho'][:,:,7,6]
 # Get time
 otime = f.variables['ocean_time'][:]
 otime = otime/(24*3600.)
-dt = np.array([otime,]*42).transpose()
+dt = np.array([otime,]*400).transpose()
 
 # Check if we should limit range
 if args.maxdensity > 0.0:
@@ -43,7 +43,7 @@ plt.contourf(dt, z_r, rho, 200, cmap=cm.ocean_r)
 plt.colorbar(label='Potential density anomaly [kg/m^3]')
 plt.xlabel('Days')
 plt.ylabel('Depth [m]')
-plt.show()
+plt.show(block=False)
 
 # Close file
 f.close()

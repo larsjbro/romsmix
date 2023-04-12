@@ -38,7 +38,7 @@ for i in range(N):
         plt.plot(u, v, 'g-')
 
     plt.axis('equal')
-    plt.show()
+    plt.show(block=False)
 
     # Close file
     f.close()

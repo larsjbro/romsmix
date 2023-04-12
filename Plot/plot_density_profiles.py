@@ -39,7 +39,7 @@ for i in range(N):
 plt.xlabel('Potential density anomaly [kg/m^3]')
 plt.ylabel('Depth [m]')
 plt.legend()
-plt.show()
+plt.show(block=False)
 
 # Close files
 for i in range(N):

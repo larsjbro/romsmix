@@ -256,6 +256,12 @@
           srflx(i,j)=cff*100.0_r8
         END DO
       END DO
+# elif defined COLUMN_NORKYST
+      DO j=JstrT,JendT
+        DO i=IstrT,IendT
+          srflx(i,j)=cff*100.0_r8
+        END DO
+      END DO
 # else
       DO j=JstrT,JendT
         DO i=IstrT,IendT

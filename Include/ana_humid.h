@@ -95,6 +95,12 @@
           Hair(i,j)=60.0_r8
         END DO
       END DO
+#elif defined COLUMN_NORKYST
+      DO j=JstrT,JendT
+        DO i=IstrT,IendT
+          Hair(i,j)=60.0_r8
+        END DO
+      END DO
 #else
       ana_humidity.h: no values provided for Hair.
 #endif

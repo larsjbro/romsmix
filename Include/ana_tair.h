@@ -88,6 +88,12 @@
           Tair(i,j)=10.0_r8
         END DO
       END DO
+#elif defined COLUMN_NORKYST
+      DO j=JstrT,JendT
+        DO i=IstrT,IendT
+          Tair(i,j)=10.0_r8
+        END DO
+      END DO
 #else
       ana_tair.h: no values provided for Tair.
 #endif

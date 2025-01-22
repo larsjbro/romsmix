@@ -1,5 +1,28 @@
 # NetCDF files
-*.nc
+*.nc*
 
 # Log files
 *.log
+
+# Build files
+Build*
+
+# Run dir content
+Run/*
+
+# Compiler env
+Compilers
+
+# Experiments folder
+experiments
+
+# Norkyst
+*norkyst*
+
+# User mods input files
+Forcing/User
+Initial/User
+
+# Mac stuff and conda
+.DS_Store
+.conda

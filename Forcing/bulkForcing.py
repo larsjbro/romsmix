@@ -1,4 +1,3 @@
-#!/usr/bin/python3
 from netCDF4 import Dataset
 import numpy as np
 import os
@@ -20,7 +19,7 @@ for varname in frcvar:
     var[:] = 0.0
 
 # Setting constant wind in x-direction
-f.variables['Uwind'][:,:,:] = 10.0
+f.variables['Uwind'][:,:,:] = 2.0
 
 # Setting constant humidity
 f.variables['Qair'][:,:,:] = 80.0
@@ -41,16 +40,16 @@ f.variables['Pair'][:,:,:] = 1020.0
 # the start of "roms_frc.cdl".
 #
 ot = f.variables['ocean_time']
-timevec = np.linspace(0.0,7*24*3600.0,169) 
+timevec = np.linspace(0.0,7.0,169) + 18100.0
 ot[:] = timevec
 
 # Setting shortwave diurnal cycle
 swrad = np.zeros_like(f.variables['swrad'][:])
-onedayfreq = 2*np.pi/(3600.*24)
-for i in range(169):
-    swrad[i,:,:] = -300.0*np.cos(onedayfreq*timevec[i])*np.ones((14,12))
+#onedayfreq = 2*np.pi/(3600.*24)
+#for i in range(169):
+#    swrad[i,:,:] = -300.0*np.cos(onedayfreq*timevec[i])*np.ones((14,12))
     
-swrad[np.where(swrad<0)] = 0.0
+#swrad[np.where(swrad<0)] = 0.0
 
 f.variables['swrad'][:,:,:] = swrad
 

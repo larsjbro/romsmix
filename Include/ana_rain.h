@@ -88,6 +88,12 @@
           rain(i,j)=0.0_r8
         END DO
       END DO
+#elif defined COLUMN_NORKYST
+      DO j=JstrT,JendT
+        DO i=IstrT,IendT
+          rain(i,j)=0.0_r8
+        END DO
+      END DO
 #else
       ana_rain.h: no values provided for rain.
 #endif

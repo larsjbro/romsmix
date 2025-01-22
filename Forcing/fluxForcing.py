@@ -18,15 +18,15 @@ for varname in frcvar:
     var = f.variables[varname]
     var[:] = 0.0
 
-# Setting constant stress in x-direction
+# Setting stress in x-direction
 sustr = f.variables['sustr']
-#sustr[:] = 0.0
-sustr[:] = 0.05
+sustr[:] = 0.0
+# sustr[:] = 0.05
 
 # Setting constant cooling
 shflux = f.variables['shflux']
-#shflux[:] = 0.0
-shflux[2:8] = -100.0
+shflux[:] = 0.0
+#shflux[2:8] = -100.0
 
 # Set time variable, the end time is the important one.
 #
@@ -35,7 +35,7 @@ shflux[2:8] = -100.0
 # the start of "roms_frc.cdl".
 #
 ot = f.variables['ocean_time']
-#ot[:] = [0.0,7*24*3600.0] 
+# ot[:] = [0.0,7*24*3600.0] 
 timevec = np.linspace(0.0,7*24*3600.0,169)
 ot[:] = timevec
 
@@ -47,8 +47,20 @@ swrad = np.zeros_like(f.variables['swrad'][:])
 #
 #swrad[np.where(swrad<0)] = 0.0
 
-
 f.variables['swrad'][:,:,:] = swrad
+
+# Experiment with constant magnitude wind stress for rotating case, but with
+# constant direction in an absolute sense. Assuming Coriolis parameter is
+# consistent with 60 deg N.
+sustr = np.zeros_like(f.variables['sustr'])
+svstr = np.zeros_like(f.variables['svstr'])
+f0 = 0.00012630313674635122
+#for i in range(169):
+#    sustr[i,:,:] = 0.2*np.cos(f0*timevec[i]*np.ones((14,11)))
+#    svstr[i,:,:] = -0.2*np.sin(f0*timevec[i]*np.ones((13,12)))
+
+f.variables['sustr'][:,:,:] = sustr
+f.variables['svstr'][:,:,:] = svstr
 
 # Sync file to force write, then close.
 f.sync()

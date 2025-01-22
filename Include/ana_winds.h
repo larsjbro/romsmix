@@ -119,6 +119,13 @@
           Vwind(i,j)=0.0
         END DO
       END DO
+#elif defined COLUMN_NORKYST
+      DO j=JstrT,JendT
+        DO i=IstrT,IendT
+          Uwind(i,j)=10.0
+          Vwind(i,j)=0.0
+        END DO
+      END DO
 #else
       ana_winds.h: no values provided for Uwind and Vwind.
 #endif

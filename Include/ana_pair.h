@@ -89,6 +89,12 @@
           Pair(i,j)=1020.0_r8
         END DO
       END DO
+#elif defined COLUMN_NORKYST
+      DO j=JstrT,JendT
+        DO i=IstrT,IendT
+          Pair(i,j)=1020.0_r8
+        END DO
+      END DO
 #else
       ana_pair.h: no values provided for Pair.
 #endif

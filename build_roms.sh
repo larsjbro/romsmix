@@ -120,7 +120,7 @@ export     MY_PROJECT_DIR=${PWD}
 # machine. This script is designed to more easily allow for differing paths
 # to the code and inputs on differing machines.
 
- export       MY_ROMS_SRC=${HOME}/ROMS-1064
+ export       MY_ROMS_SRC=${HOME}/master/ROMS-1064
 
 # Set path of the directory containing makefile configuration (*.mk) files.
 # The user has the option to specify a customized version of these files
@@ -128,7 +128,7 @@ export     MY_PROJECT_DIR=${PWD}
 # ${MY_ROMS_SRC}/Compilers. If this is the case, the you need to keep
 # these configurations files up-to-date.
 
- export         COMPILERS=${MY_PROJECT_DIR}/Compilers
+ export         COMPILERS=${MY_ROMS_SRC}/Compilers
 
 #--------------------------------------------------------------------------
 # Set tunable CPP options.
@@ -158,20 +158,20 @@ export     MY_PROJECT_DIR=${PWD}
 # conditions file "roms_ini.nc" in the directory where the model is run.
 #
  export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_STRAT"
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_STRAT"
+# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_STRAT"                #LJB
 #
 
 # Here you choose whether or not rotational effects should be included.
 # If COLUMN_F is activated, ROMS is configured for an f-plane at 60N.
 #
- export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_F"
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_F"
+# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_F"
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_F"
 #
 
 # Here you choose what turbulence scheme to use. 
 #
 # Analytical constant viscosity and diffusivity (values are set in ana_vmix.h)
- export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_CONST_MIX"
+# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_CONST_MIX"
 #
 # The Richardson number based scheme:
 # export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DBVF_MIXING"
@@ -180,7 +180,7 @@ export     MY_PROJECT_DIR=${PWD}
 # export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DLMD_MIXING"
 #
 # The general length scale scheme:
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DGLS_MIXING"
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DGLS_MIXING"
 #
 
 # Set ROMS to use bulk fluxes.
@@ -188,7 +188,7 @@ export     MY_PROJECT_DIR=${PWD}
 # export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DATM_PRESS"
 # export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DBULK_FLUXES"
 # export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DLONGWAVE"
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DEMINUSP"
+# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DEMINUSP"           #LJB
 #
 
 #--------------------------------------------------------------------------
@@ -216,7 +216,7 @@ export     MY_PROJECT_DIR=${PWD}
 #export              FORT=pgi
 
 #export         USE_DEBUG=on            # use Fortran debugging flags
-#export         USE_LARGE=on            # activate 64-bit compilation
+ export         USE_LARGE=on            # activate 64-bit compilation
 
 # ROMS I/O choices and combinations. A more complete description of the
 # available options can be found in the wiki (https://myroms.org/wiki/IO).
@@ -224,7 +224,7 @@ export     MY_PROJECT_DIR=${PWD}
 # instruct the ROMS build system to use nf-config to determine the
 # necessary libraries and paths to link into the ROMS executable.
 
-#export       USE_NETCDF4=on            # compile with NetCDF-4 library
+ export       USE_NETCDF4=on            # compile with NetCDF-4 library
 #export   USE_PARALLEL_IO=on            # Parallel I/O with NetCDF-4/HDF5
 #export           USE_PIO=on            # Parallel I/O with PIO library
 #export       USE_SCORPIO=on            # Parallel I/O with SCORPIO library

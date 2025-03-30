@@ -27,19 +27,25 @@
 #endif
 
 #ifdef LMD_MIXING
-# define SPLINES_VDIFF
-# define SPLINES_VVISC
+/* LJB
+** # define SPLINES_VDIFF
+** # define SPLINES_VVISC
+*/
 # define LMD_RIMIX
 # define LMD_CONVEC
 # define LMD_DDMIX
 # define LMD_SKPP
 # define LMD_NONLOCAL
-# define RI_SPLINES
+/* LJB
+** # define RI_SPLINES 
+*/  
 #endif
 
 #ifdef GLS_MIXING
-# define SPLINES_VDIFF
-# define SPLINES_VVISC
+/* LJB
+** # define SPLINES_VDIFF
+** # define SPLINES_VVISC 
+*/  
 # define CRAIG_BANNER
 # undef CANUTO_A           
 # define KANTHA_CLAYSON     

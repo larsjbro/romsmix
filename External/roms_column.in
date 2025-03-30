@@ -254,7 +254,7 @@ ad_VolCons(north) ==  F                            ! northern boundary
         NRST == 144
         NSTA == 1
         NFLT == 1
-       NINFO == 1
+       NINFO == 6
 
 ! Output history, quicksave, average, and diagnostic files parameters.
 
@@ -349,37 +349,37 @@ LtracerSponge == F F                            ! temperature, salinity, inert
 
 ! Generic length-scale turbulence closure parameters. 
 
-       GLS_P == -1.0d0                           ! k-omega
-       GLS_M == 0.5d0
-       GLS_N == -1.0d0
-    GLS_Kmin == 1.0d-10
-    GLS_Pmin == 1.0d-12
-
-    GLS_CMU0 == 0.5270d0
-      GLS_C1 == 0.555d0
-      GLS_C2 == 0.833d0
-     GLS_C3M == -0.58d0 
-     GLS_C3P == 1.0d0
-    GLS_SIGK == 2.0d0
-    GLS_SIGP == 2.0d0
-
-! Generic length-scale turbulence closure parameters. 
-!
-!       GLS_P == 2.0d0                           ! Generic
-!       GLS_M == 1.0d0
-!       GLS_N == -0.67d0
+!       GLS_P == -1.0d0                           ! k-omega
+!       GLS_M == 0.5d0
+!       GLS_N == -1.0d0
 !    GLS_Kmin == 1.0d-10
 !    GLS_Pmin == 1.0d-12
-!
-!    GLS_CMU0 == 0.5544d0 ! Kantha-Clayson stability function
-!    GLS_CMU0 == 0.5270d0 ! Canuto A stability function
-!      GLS_C1 == 1.0d0
-!      GLS_C2 == 1.22d0
-!     GLS_C3M == 0.1d0 ! Kantha-Clayson stability function
-!     GLS_C3M == 0.05d0 ! Canuto A stability function
+
+!    GLS_CMU0 == 0.5270d0
+!      GLS_C1 == 0.555d0
+!      GLS_C2 == 0.833d0
+!     GLS_C3M == -0.58d0 
 !     GLS_C3P == 1.0d0
-!    GLS_SIGK == 0.8d0
-!    GLS_SIGP == 1.07d0
+!    GLS_SIGK == 2.0d0
+!    GLS_SIGP == 2.0d0
+
+! Generic length-scale turbulence closure parameters. 
+
+       GLS_P == 2.0d0                           ! Generic
+       GLS_M == 1.0d0
+       GLS_N == -0.67d0
+    GLS_Kmin == 1.0d-8                          ! 1.0d-10 LJB
+    GLS_Pmin == 1.0d-8                          ! 1.0d-12 LJB
+
+    GLS_CMU0 == 0.5544d0 ! Kantha-Clayson stability function
+!    GLS_CMU0 == 0.5270d0 ! Canuto A stability function
+      GLS_C1 == 1.0d0
+      GLS_C2 == 1.22d0
+     GLS_C3M == 0.1d0 ! Kantha-Clayson stability function
+!     GLS_C3M == 0.05d0 ! Canuto A stability function
+     GLS_C3P == 1.0d0
+    GLS_SIGK == 0.8d0
+    GLS_SIGP == 1.07d0
 
 ! Constants used in surface turbulent kinetic energy flux computation.
 

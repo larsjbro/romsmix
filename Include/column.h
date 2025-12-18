@@ -47,8 +47,11 @@
 ** # define SPLINES_VVISC 
 */  
 # define CRAIG_BANNER
-# undef CANUTO_A           
-# define KANTHA_CLAYSON     
+# define CANUTO_A  
+/* LJB  26.11.2025
+** # undef CANUTO_A           
+** # define KANTHA_CLAYSON     
+*/  
 #endif
 
 #define ANA_BSFLUX

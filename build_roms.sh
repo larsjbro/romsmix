@@ -184,11 +184,15 @@ export     MY_PROJECT_DIR=${PWD}
 #
 
 # Set ROMS to use bulk fluxes.
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DSOLAR_SOURCE"
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DATM_PRESS"
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DBULK_FLUXES"
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DLONGWAVE"
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DEMINUSP"           #LJB
+export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DBULK_FLUXES"
+export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DATM_PRESS"
+export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DEMINUSP"           #LJB
+
+export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DSOLAR_SOURCE"        #23.09.2025 LJB
+# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DLONGWAVE_OUT"   # 26.11.2025
+export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DLONGWAVE"         # 26.11.2025
+export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DANA_CLOUD"        # 26.11.2025 # Remove line if "cloud" is part of forcing file
+ 
 #
 
 #--------------------------------------------------------------------------
@@ -216,7 +220,7 @@ export     MY_PROJECT_DIR=${PWD}
 #export              FORT=pgi
 
 #export         USE_DEBUG=on            # use Fortran debugging flags
- export         USE_LARGE=on            # activate 64-bit compilation
+ export         USE_LARGE=on            # activate 64-bit compilation  #LJB Comment out?
 
 # ROMS I/O choices and combinations. A more complete description of the
 # available options can be found in the wiki (https://myroms.org/wiki/IO).

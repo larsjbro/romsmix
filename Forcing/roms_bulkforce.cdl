@@ -9,7 +9,7 @@ dimensions:
 	eta_u = 14 ;
 	eta_v = 13 ;
 	eta_psi = 13 ;
-	ocean_time = 71 ; // (71 currently)
+	ocean_time = 169 ; // (169 currently)
 variables:
 	double ocean_time(ocean_time) ;
 		ocean_time:long_name = "atmospheric forcing time" ;
@@ -48,12 +48,13 @@ variables:
 		swrad:positive_value = "downward flux, heating" ;
 		swrad:negative_value = "upward flux, cooling" ;
 		swrad:time = "ocean_time" ;
-	float lwrad(ocean_time, eta_rho, xi_rho) ;
-		lwrad:long_name = "net longwave radiation flux" ;
-		lwrad:units = "Watts meter-2" ;
-		lwrad:positive_value = "downward flux, heating" ;
-		lwrad:negative_value = "upward flux, cooling" ;
-		lwrad:time = "ocean_time" ;
+	float lwrad_down(ocean_time, eta_rho, xi_rho) ;
+		lwrad_down:long_name = "downwelling longwave radiation flux" ;
+		lwrad_down:units = "Watts meter-2" ;
+		lwrad_down:positive_value = "downward flux, heating" ;
+		lwrad_down:negative_value = "upward flux, cooling" ;
+		lwrad_down:time = "ocean_time" ;
+
 
 // global attributes:
 		:type = "Bulk forcing file" ;

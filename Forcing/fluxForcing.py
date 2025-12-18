@@ -43,8 +43,10 @@ ot[:] = timevec
 # Setting shortwave diurnal cycle
 swrad = np.zeros_like(f.variables['swrad'][:])
 onedayfreq = 2*np.pi/(3600.*24)
+sw_amplitude = -0.0  # Old
+#sw_amplitude = -10.0  # new
 for i in range(num_time_steps):
-    swrad[i,:,:] = -0.0*np.cos(onedayfreq*timevec[i])*np.ones((14,12))
+    swrad[i,:,:] = sw_amplitude*np.cos(onedayfreq*timevec[i])*np.ones((14,12))
     
 swrad[np.where(swrad<0)] = 0.0
 

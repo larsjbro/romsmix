@@ -40,7 +40,7 @@ f.variables['Pair'][:,:,:] = 1020.0
 # the start of "roms_frc.cdl".
 #
 ot = f.variables['ocean_time']
-num_time_steps = 169
+num_time_steps = len(ot) # 169
 timevec = np.linspace(0.0,7*24*3600.0,num_time_steps) 
 ot[:] = timevec
 

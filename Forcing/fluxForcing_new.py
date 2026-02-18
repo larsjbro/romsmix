@@ -17,6 +17,8 @@ EXTERNAL_FOLDER = os.path.join(ROOT, 'External')
 INCLUDE_FOLDER = os.path.join(ROOT, 'Include')
 RESULT_FOLDER = os.path.join(ROOT, 'Results')
 
+SEC_PER_DAY = 24.0 * 3600.0
+NANOSEC_PER_SECOND = 1e9
 
 def now():
     """Returns current date time on isoformat: yyyy-mm-ddThhmmss"""
@@ -34,7 +36,7 @@ def print_forcing_info(filename, names=None):
         print(name, vmin, avg, vmax)
         print('')
 
-def make_bulkforce_file():
+def make_bulkforce_file(diurnal=True):
     """Generate bulk forcing file"""
     # Generate empty forcing file and open for editing
     os.system('ncgen -b roms_bulkforce.cdl')
@@ -53,10 +55,16 @@ def make_bulkforce_file():
         var[:] = 0.0
 
     # Setting lwrad_down to 400
-    f.variables['lwrad_down'][:,:,:] = 400.0
+    #f.variables['lwrad_down'][:,:,:] = 400.0
+
+    # Setting swrad to constant value # See below for variable swrad
+    #f.variables['swrad'][:,:,:] = 300.0    
 
     # Setting constant wind in x-direction
-    f.variables['Uwind'][:,:,:] = 10.0
+    f.variables['Uwind'][:,:,:] = 5.0
+
+    # Setting cloud cover to 1
+    f.variables['cloud'][:,:,:] = 0.0
 
     # Setting constant humidity
     f.variables['Qair'][:,:,:] = 80.0
@@ -84,16 +92,21 @@ def make_bulkforce_file():
     swrad = np.zeros_like(f.variables['swrad'][:])
     onedayfreq = 2*np.pi
     #sw_amplitude = -300.0  # Old
-    sw_amplitude = 300.0  # new
+    sw_amplitude = 800.0  # new
     # Antar at timevec er i DAGER. Faseforskyvning på 0.5 for å ha toppen ved middag (0.5 dager)
     phase_shift = 0.5
 
-    for i in range(num_time_steps):
-        swrad_value = sw_amplitude * np.cos(onedayfreq * (timevec[i] - phase_shift))
-        # Setter negative verdier til null (ingen sol om natten)
-        swrad_value = max(0.0, swrad_value) 
+    if diurnal:
+        for i in range(num_time_steps):
+            swrad_value = sw_amplitude * np.cos(onedayfreq * (timevec[i] - phase_shift))
+            # Setter negative verdier til null (ingen sol om natten)
+            swrad_value = max(0.0, swrad_value) 
 
-        swrad[i,:,:] = swrad_value * np.ones((14,12)) # 14x12 er antall celler i ditt grid
+            swrad[i,:,:] = swrad_value * np.ones((14,12)) # 14x12 er antall celler i ditt grid
+    else: #average diurnal
+        swrad = np.maximum(sw_amplitude * np.cos(onedayfreq * (timevec - phase_shift)), 0).mean()
+        print(f"Mean swrad: {swrad}")
+        
 
     f.variables['swrad'][:,:,:] = swrad
 
@@ -495,8 +508,7 @@ def robust_time_conversion(time_da: xr.DataArray):
                where time_float_sec is time in seconds (float)
                and time_days_da is a DataArray with time in days, used for coordinates.
     """
-    SEC_PER_DAY = 24.0 * 3600.0
-    SEC_PER_NANOSECOND = 1e9
+    
 
     time_values = time_da.values
     units = time_da.attrs.get('units', '').lower()
@@ -514,7 +526,7 @@ def robust_time_conversion(time_da: xr.DataArray):
     # Case 3: Time is datetime-like (e.g., datetime64[ns])
     else:
         # Convert nanoseconds to seconds
-        time_float_sec = time_values.astype('int64').astype(float) / SEC_PER_NANOSECOND
+        time_float_sec = time_values.astype('int64').astype(float) / NANOSEC_PER_SECOND
         time_days_values = time_float_sec / SEC_PER_DAY
 
     # Create a DataArray with 'days' as coordinate for robust interpolation
@@ -664,6 +676,91 @@ def plot_thermodynamic_fluxes(his_file: str, frc_file: str, filename: str=''):
         print(f"An unexpected error occurred: {e}")
         print(f"Debug: Error type was {type(e)}")
 
+def calculate_model_heat_stats(ds_his, rho0=1025.0, Cp=3985.0):
+    """
+    Calculates total heat content change and the rate of change from ROMS history data.
+
+    Parameters
+    ----------
+    ds_his : xarray dataset
+        ROMS history data
+    rho0 : real scalar default 1025.0  
+        Reference density of seawater (kg/m^3)
+    Cp : real scalar, default 3985.0 
+        Specific heat of seawater (J/(kg*K))
+    """
+    temp = ds_his['temp']
+    pm = ds_his['pm']
+    pn = ds_his['pn']
+    z_w = ds_his['z_w']
+    
+    # Time handling
+    his_time_float_sec, his_time_days = robust_time_conversion(ds_his['ocean_time'])
+    dt_his = np.mean(np.diff(his_time_float_sec))
+    
+    # Calculate area and volume
+    try:
+        area_scalar = 1.0 / (pm.isel(eta_rho=0, xi_rho=0).item() * pn.isel(eta_rho=0, xi_rho=0).item())
+    except Exception:
+        print("Advarsel: Grid-variablene pm/pn har uventede dimensjoner. Bruker standard 1x1 areal.")
+        area_scalar = 1.0
+        
+    Hz = z_w.diff(dim='s_w').rename({'s_w': 's_rho'})
+    volume_per_layer_aligned = xr.DataArray(
+        Hz.values * area_scalar,
+        coords=temp.coords,
+        dims=temp.dims
+    )
+
+    # Calculate Total Heat Content (J)
+    initial_temp = temp.isel(ocean_time=0, drop=True) 
+    temp_anomaly = temp - initial_temp
+    heat_content_per_cell = rho0 * Cp * temp_anomaly * volume_per_layer_aligned
+    total_heat_content = heat_content_per_cell.sum(dim=['eta_rho', 'xi_rho', 's_rho'])
+    total_heat_content = total_heat_content.assign_coords(ocean_time=his_time_days)
+
+    # Calculate Rate of Change (W)
+    rate_of_change_hc = np.diff(total_heat_content.values) / dt_his
+    time_midpoints_days = (his_time_float_sec[:-1] + (dt_his / 2.0)) / SEC_PER_DAY #(24.0 * 3600.0)
+    rate_of_change_da = xr.DataArray(rate_of_change_hc, coords=[('ocean_time', time_midpoints_days)])
+
+    return total_heat_content, rate_of_change_da, area_scalar
+
+def calculate_forcing_heat_stats(ds_frc, ds_his, area_scalar):
+    """
+    Calculates integrated forcing flux and cumulative heat input from forcing data.
+    """
+    frc_time_float_sec, frc_time_days = robust_time_conversion(ds_frc['ocean_time'])
+    his_time_float_sec, his_time_days = robust_time_conversion(ds_his['ocean_time'])
+    
+    # Determine Net Heat Flux (including LW calculation if necessary)
+    if 'shflux' in ds_frc.variables:
+        net_heat_flux = ds_frc['shflux']
+    elif 'lwrad_down' in ds_frc.variables and 'swrad' in ds_frc.variables:
+        epsilon = 0.97  # Emissivity of sea surface
+        sigma = 5.67e-8 # Stefan-Boltzmann constant (W m^-2 K^-4)
+
+        sst_kelvin = ds_his['temp'].isel(s_rho=-1, drop=True) + 273.15
+        dl_out = (epsilon * sigma * sst_kelvin**4).assign_coords(ocean_time=his_time_days)
+        
+        dl_out_interp = dl_out.interp(
+            ocean_time=frc_time_days, 
+            method='linear', 
+            kwargs={"fill_value": "extrapolate"}
+        )
+        net_heat_flux = ds_frc['swrad'] + (ds_frc['lwrad_down'] - dl_out_interp)
+    else:
+        raise KeyError("No valid heat flux variable found in forcing file.")
+
+    # Calculate Integrated Flux and Cumulative Input
+    dt_frc = np.mean(np.diff(frc_time_float_sec)) if len(frc_time_float_sec) > 1 else (his_time_float_sec[1] - his_time_float_sec[0])
+    
+    forcing_flux_sum = (net_heat_flux * area_scalar).fillna(0.0).sum(dim=['eta_rho', 'xi_rho'])
+    forcing_flux_sum = forcing_flux_sum.assign_coords(ocean_time=frc_time_days)
+    
+    cumulative_forcing_input = (forcing_flux_sum * dt_frc).cumsum(dim='ocean_time')
+
+    return forcing_flux_sum, cumulative_forcing_input
 
 def verify_heat_content(his_file: str, frc_file: str, filename: str=''):
     """
@@ -671,164 +768,34 @@ def verify_heat_content(his_file: str, frc_file: str, filename: str=''):
     with the cumulative heat flux input from a forcing file.
     """
     try:
-        print(f"Loading history file: {his_file}")
         ds_his = xr.open_dataset(his_file)
-        print(f"Loading forcing file: {frc_file}")
         ds_frc = xr.open_dataset(frc_file)
 
-        rho0 = 1025.0
-        Cp = 3985.0
-        temp = ds_his['temp'] # (ocean_time, s_rho, eta_rho, xi_rho)
+        # 1. Calculate Model Side
+        total_hc, rate_hc, area = calculate_model_heat_stats(ds_his)
         
-        # HISTORY-tid
-        his_time_float_sec, his_time_days = robust_time_conversion(ds_his['ocean_time'])
-        # FORCING-tid
-        frc_time_float_sec, frc_time_days = robust_time_conversion(ds_frc['ocean_time'])
-        
-        # --- DLONGWAVE_OUT (Outgoing Longwave Radiation) Calculation ---
-        
-        # 1. Constants
-        epsilon = 0.97  # Emissivity of sea surface
-        sigma = 5.67e-8 # Stefan-Boltzmann constant (W m^-2 K^-4)
+        # 2. Calculate Forcing Side
+        forcing_flux, cum_forcing = calculate_forcing_heat_stats(ds_frc, ds_his, area)
 
-        # 2. Get Sea Surface Temperature (SST) in Kelvin
-        sst_celsius = temp.isel(s_rho=-1, drop=True)
-        sst_kelvin = sst_celsius + 273.15
-        
-        # 3. Apply Stefan-Boltzmann Law: Q_out = epsilon * sigma * T^4
-        dl_out = epsilon * sigma * sst_kelvin**4
-        dl_out.name = 'DLONGWAVE_OUT'
-        
-        # Assign the float-based coordinate
-        dl_out = dl_out.assign_coords(ocean_time=his_time_days)
-        print(f"Beregnet DLONGWAVE_OUT fra SST (Shape: {dl_out.shape})")
-
-        # --- Determine Net Heat Flux Variable (net_heat_flux) ---
-        if 'shflux' in ds_frc.variables  in ds_frc.variables:
-            # Optimal: Use ROMS output shflux (which should contain net non-shortwave)
-            net_heat_flux = ds_frc['shflux']
-            print("Bruker 'shflux' (total ikke-kortbølge fluks) for nettovarmefluks.")
-        elif 'lwrad_down' in ds_frc.variables and 'swrad' in ds_frc.variables:
-            # Analytical/Simplified: Use Downward SW and calculated Net LW
-            
-            # Use the raw numpy float array as the target coordinate
-            dl_out_on_frc_time = dl_out.interp(
-                ocean_time=frc_time_days.values, 
-                method='linear', 
-                kwargs={"fill_value": "extrapolate"}
-            )
-            
-            net_longwave_flux = ds_frc['lwrad_down'] - dl_out_on_frc_time
-            
-            # Total net heat flux = SW_down + (LW_down - LW_out)
-            net_heat_flux = ds_frc['swrad'] + net_longwave_flux
-            
-            print("Bruker 'swrad' og nett-langbølge (lwrad_down - DLONGWAVE_OUT_interp) for nettovarmefluks.")
-        else:
-            raise KeyError("Ingen gyldig varmefluks-variabel funnet i forcing-filen for verifikasjon.")
-        
-        net_shflux = net_heat_flux 
-
-        # --- KRITISK FIX: Address conflicting sizes/anomaly calculation ---
-        pm = ds_his['pm']
-        pn = ds_his['pn']
-        z_w = ds_his['z_w']
-        
-        # 1. Calculate scalar area
-        try:
-            area_scalar = 1.0 / (pm.isel(eta_rho=0, xi_rho=0).item() * pn.isel(eta_rho=0, xi_rho=0).item())
-        except Exception:
-             print("Advarsel: Grid-variablene pm/pn har uventede dimensjoner. Bruker standard 1x1 areal.")
-             area_scalar = 1.0
-        
-        # 2. Calculate layer thickness (Hz)
-        Hz = z_w.diff(dim='s_w').rename({'s_w': 's_rho'})
-
-        # 3. Calculate Volume values
-        volume_values = Hz.values * area_scalar 
-        
-        # 4. Create the final volume DataArray using the exact coordinates of the temperature field
-        volume_per_layer_aligned = xr.DataArray(
-            volume_values,
-            coords=temp.coords,
-            dims=temp.dims
-        ).rename('volume_aligned') 
-
-        # FIX FOR VALUE ERROR: Use drop=True to remove the ocean_time coordinate from initial_temp,
-        # forcing correct broadcasting in the subtraction.
-        initial_temp = temp.isel(ocean_time=0, drop=True) 
-        temp_anomaly = temp - initial_temp
-        
-        # --- DEBUG Sjekk ---
-        print(f"\nShape of temp_anomaly before ALIGNED multiplication: {temp_anomaly.shape}")
-        print(f"Shape of volume_per_layer_aligned before ALIGNED multiplication: {volume_per_layer_aligned.shape}")
-        
-        # 5. Final multiplication
-        heat_content_per_cell = rho0 * Cp * temp_anomaly * volume_per_layer_aligned
-
-        print(f"Shape of heat_content_per_cell AFTER ALIGNED multiplication: {heat_content_per_cell.shape}")
-        
-        # Debug: Sjekk varmeinnholdet før summering
-        max_hc_change = np.nanmax(np.abs(heat_content_per_cell.values))
-        print(f"Maximum absolute heat content change in a single cell: {max_hc_change:.2f} J")
-        
-        # Summing should now work as expected
-        total_heat_content = heat_content_per_cell.sum(dim=['eta_rho', 'xi_rho', 's_rho'])
-
-        # --- Fortsatt TIDSBEHANDLING og Plotting ---
-
-        total_heat_content = total_heat_content.assign_coords(ocean_time=his_time_days)
-        # Use simple array subtraction for robust time difference
-        dt_his = np.mean(np.diff(his_time_float_sec))
-
-        if len(frc_time_float_sec) > 1:
-            dt_frc = np.mean(np.diff(frc_time_float_sec))
-        else:
-            dt_frc = dt_his 
-        
-        total_forcing_flux = (net_shflux * area_scalar).fillna(0.0) 
-    
-        # Calculate cumulative input using the time step from the forcing file (dt_frc)
-        cumulative_forcing_input = (total_forcing_flux * dt_frc).sum(dim=['eta_rho', 'xi_rho']).cumsum(dim='ocean_time')
-        cumulative_forcing_input = cumulative_forcing_input.assign_coords(ocean_time=frc_time_days)
-        
-        # --- Plotting ---
+        # 3. Plotting
         fig, axes = plt.subplots(2, 1, figsize=(12, 12))
 
-        total_heat_content.plot(ax=axes[0], label='Endring i varmeinnhold (modell)', marker='o', linestyle='-')
-        cumulative_forcing_input.plot(ax=axes[0], label='Kumulativ varme-input (forcing)', marker='x', linestyle='--')
-
-        axes[0].set_title('Sammenligning av modellens varmeinnhold og kumulativ varmefluks')
-        axes[0].set_xlabel('Tid (Dager)')
-        axes[0].set_ylabel('Varmeinnhold (Joule)')
-        
+        total_hc.plot(ax=axes[0], label='Model Heat Change', marker='o')
+        cum_forcing.plot(ax=axes[0], label='Cumulative Forcing Input', marker='x', linestyle='--')
+        axes[0].set_title('Comparison: Total Heat Content vs. Cumulative Flux')
         axes[0].legend()
         axes[0].grid(True)
 
-        rate_of_change_hc = np.diff(total_heat_content.values) / dt_his
-        time_midpoints_sec = his_time_float_sec[:-1] + (dt_his / 2.0)
-        time_midpoints_days = time_midpoints_sec / SEC_PER_DAY
-        rate_of_change_da = xr.DataArray(rate_of_change_hc, coords=[('ocean_time', time_midpoints_days)])
-        
-        forcing_flux_avg_over_grid = total_forcing_flux.sum(dim=['eta_rho', 'xi_rho']) # Uses net_heat_flux
-        forcing_flux_avg_over_grid = forcing_flux_avg_over_grid.assign_coords(ocean_time=frc_time_days)
-
-        rate_of_change_da.plot(ax=axes[1], label='Rate av varmeinnhold endring (modell)', marker='o', linestyle='-')
-        forcing_flux_avg_over_grid.plot(ax=axes[1], label='Total varmefluks (forcing)', marker='x', linestyle='--')
-
-        axes[1].set_title('Sammenligning av varme-endringsrate')
-        axes[1].set_xlabel('Tid (Dager)')
-        axes[1].set_ylabel('Endring i varmeinnhold (W)')
-        
+        rate_hc.plot(ax=axes[1], label='Model Heat Rate (W)', marker='o')
+        forcing_flux.plot(ax=axes[1], label='Total Forcing Flux (W)', marker='x', linestyle='--')
+        axes[1].set_title('Comparison: Heat Change Rate')
         axes[1].legend()
         axes[1].grid(True)
 
         plt.tight_layout()
         if filename:
             plt.savefig(filename)
-        
-        print("\nVerification completed. Sjekk om forcing fra modellen og kumulativ flux stemmer overens.")
-
+        # plt.show()
     except FileNotFoundError as e:
         print(f"Error: A required file was not found. {e}")
     except KeyError as e:
@@ -836,197 +803,6 @@ def verify_heat_content(his_file: str, frc_file: str, filename: str=''):
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
         print(f"Debug: Error type was {type(e)}")
-
-
-def verify_heat_content0(his_file: str, frc_file: str, filename: str=''):
-    """
-    Calculates the total heat content in a ROMS simulation and compares it
-    with the cumulative heat flux input from a forcing file.
-
-    Args:
-        his_file (str): Path to the ROMS history file (e.g., 'roms_his.nc').
-        frc_file (str): Path to the ROMS forcing file (e.g., 'roms_frc.nc').
-    """
-    try:
-        # Load the ROMS history and forcing files
-        print(f"Loading history file: {his_file}")
-        ds_his = xr.open_dataset(his_file)
-        print(f"Loading forcing file: {frc_file}")
-        ds_frc = xr.open_dataset(frc_file)
-
-        # Get constants and variables
-        rho0 = 1025.0  # Reference density of seawater (kg/m^3)
-        Cp = 3985.0    # Specific heat of seawater (J/(kg*K))
-
-        temp = ds_his['temp']
-        
-        # Determine the correct heat flux variable(s) to use
-        if 'shflux' in ds_frc.variables:
-            net_shflux = ds_frc['shflux']
-            print("Bruker 'shflux' variabel fra forcing-filen.")
-        elif 'swrad' in ds_frc.variables and 'lwrad_down' in ds_frc.variables:
-            net_shflux = ds_frc['swrad'] + ds_frc['lwrad_down']
-            print("Bruker 'swrad' og 'lwrad_down' for å beregne nettovarmefluks.")
-        else:
-            raise KeyError("Ingen gyldig varmefluks-variabel ('shflux' eller 'swrad'/'lwrad') funnet i forcing-filen.")
-
-        # We need the cell volumes from the history file to calculate heat content.
-        pm = ds_his['pm']
-        pn = ds_his['pn']
-        z_w = ds_his['z_w']
-
-        # The most reliable way to get layer thickness (Hz) is from z_w.diff()
-        Hz = z_w.diff(dim='s_w').rename({'s_w': 's_rho'})
-        #Hz = calculate_Hz(ds_his)
-        # Calculate the area of each cell
-        area = 1 / (pm * pn)
-
-        # Calculate the volume of each cell
-        volume = area * Hz
-        print(f"The shape of 'volume' array is: {volume.shape}")
-
-        # Ensure that the dimensions of temp and volume are aligned before multiplication
-
-        if temp.dims != volume.dims:
-            print("Warning: dimensions mismatch between 'temp' and 'volume'.")
-            print(f"'temp' dimensions: {temp.dims}")
-            print(f"'volume' dimensions: {volume.dims}")
-
-            # Transpose the volume array to match the dimension order of temp
-            volume = volume.transpose('ocean_time', 's_rho', 'eta_rho', 'xi_rho')
-            
-            print(f"Dimensions for 'volume' are adjusted to: {volume.dims}")
-
-        # Calculate total heat content at each time step
-        # Formula: Heat Content = rho0 * Cp * integral(T * dV)
-        print("Calculating total heat content...")
-        #heat_content_per_cell = rho0 * Cp * temp * volume
-        initial_temp = temp.isel(ocean_time=0)
-        temp_anomaly = temp - initial_temp
-
-        heat_content_per_cell = xr.DataArray(
-            rho0 * Cp * temp_anomaly.values * volume.values,
-            dims=temp.dims,
-            coords=temp.coords
-        )
-        
-        total_heat_content = heat_content_per_cell.sum(dim=['eta_rho', 'xi_rho', 's_rho'])
-        #total_heat_content = (rho0 * Cp * (temp * volume)).sum(dim=['eta_rho', 'xi_rho', 's_rho'])
-
-        # --- KONVERTERER TIL DAGER FOR PLOTTING ---
-        SEC_PER_DAY = 24.0 * 3600.0
-        
-        his_time_values = ds_his['ocean_time'].values
-        
-        # Konverter til float i sekunder FØR skalering (unngår ufunc 'divide' feilen)
-        if np.issubdtype(his_time_values.dtype, np.number):
-            # Det er allerede er float (sekunder), bruk det direkte
-            his_time_float_sec = his_time_values
-        else:
-            # Hvis det er (datetime64[ns] eller timedelta64[ns]), konverter til float i sekunder
-            his_time_float_sec = his_time_values.astype('timedelta64[s]').astype(float)
-        
-        # 1. Beregn tidssteget dt_sec (robust metode)
-        # Bruk differansen i de rene sekundverdiene
-        dt_sec = his_time_float_sec[1] - his_time_float_sec[0] # Time step in seconds
-        # 2. Beregn tidskoordinatene i DAGER for plotting
-        ocean_time_days_values = his_time_float_sec / SEC_PER_DAY
-
-        # Opprett en DataArray for dager (som koordinat)
-        ocean_time_days = xr.DataArray(
-            ocean_time_days_values,
-            dims=ds_his['ocean_time'].dims,
-            coords={ds_his['ocean_time'].dims[0]: ocean_time_days_values}
-        )
-        ocean_time_days.attrs['units'] = 'days'
-
-        # Tildel den nye dag-koordinaten til DataArrays
-        total_heat_content = total_heat_content.assign_coords(ocean_time=ocean_time_days)
-
-        # Calculate cumulative heat flux from forcing file
-        # The `net_shflux` variable has dimensions (ocean_time, eta_rho, xi_rho)
-        # The `area` variable has dimensions (eta_rho, xi_rho)
-        # We broadcast the area to the shflux array
-        total_forcing_flux = (net_shflux * area).fillna(0.0) # fyller NaN med 0
-
-        cumulative_forcing_input = (total_forcing_flux * dt_sec).sum(dim=['eta_rho', 'xi_rho']).cumsum(dim='ocean_time')
-        cumulative_forcing_input = cumulative_forcing_input.assign_coords(ocean_time=ocean_time_days)
-
-        # Old plot
-        # Convert total_heat_content to be in Joules relative to the initial time step
-        #initial_heat_content = total_heat_content.isel(ocean_time=0)
-        #relative_heat_content = total_heat_content - initial_heat_content
-
-        # Create the plot
-        #plt.figure(figsize=(12, 6))
-        
-        # Plot the relative heat content from the model
-        #relative_heat_content.plot(label='Endring i varmeinnhold (modell)', marker='o', linestyle='-')
-        
-        # Plot the cumulative forcing input
-        #plt.plot(ds_his['ocean_time'], cumulative_forcing_input, label='Kumulativ varme-input (forcing)', marker='x', linestyle='--')
-        
-        #plt.title('Sammenligning av modellens varmeinnhold og kumulativ varmefluks')
-        #plt.xlabel('Tid')
-        #plt.ylabel('Varmeinnhold (Joule)')
-        #plt.legend()
-        #plt.grid(True)
-        
-        # Plotting
-        fig, axes = plt.subplots(2, 1, figsize=(12, 12))
-
-        # --- Subplot 1: Cumulative Heat Content vs. Cumulative Flux ---
-        total_heat_content.plot(ax=axes[0], label='Endring i varmeinnhold (modell)', marker='o', linestyle='-')
-        cumulative_forcing_input.plot(ax=axes[0], label='Kumulativ varme-input (forcing)', marker='x', linestyle='--')
-
-        axes[0].set_title('Sammenligning av modellens varmeinnhold og kumulativ varmefluks')
-        axes[0].set_xlabel('Tid')
-        axes[0].set_ylabel('Varmeinnhold (Joule)')
-        axes[0].legend()
-        axes[0].grid(True)
-
-        # --- Subplot 2: Rate of Change of Heat Content vs. Forcing Flux ---
-        print("Beregner raten av endring i varmeinnhold...")
-        # Calculate the rate of change of heat content using a centered difference
-        rate_of_change_hc = np.diff(total_heat_content.values) / dt_sec
-
-        # 3. Beregn tidspunktene i DAGER for diff (midtpunkter)
-        # Bruk de rene float-sekundene: his_time_float_sec
-        time_midpoints_sec = his_time_float_sec[:-1] + (dt_sec / 2.0)
-        time_midpoints_days = time_midpoints_sec / SEC_PER_DAY # Konvertering til dager
-
-        # Convert to a DataArray for easy plotting
-        rate_of_change_da = xr.DataArray(rate_of_change_hc, coords=[('ocean_time', time_midpoints_days)])
-
-        # Calculate the total forcing flux averaged over the grid
-        forcing_flux_avg_over_grid = total_forcing_flux.sum(dim=['eta_rho', 'xi_rho'])
-        forcing_flux_avg_over_grid = forcing_flux_avg_over_grid.assign_coords(ocean_time=ocean_time_days)
-
-        rate_of_change_da.plot(ax=axes[1], label='Rate av varmeinnhold endring (modell)', marker='o', linestyle='-')
-        forcing_flux_avg_over_grid.plot(ax=axes[1], label='Total varmefluks (forcing)', marker='x', linestyle='--')
-
-        axes[1].set_title('Sammenligning av varme-endringsrate')
-        axes[1].set_xlabel('Tid [Dager]')
-        axes[1].set_ylabel('Endring i varmeinnhold (W)')
-        axes[1].legend()
-        axes[1].grid(True)
-
-        plt.tight_layout()
-
-        if filename:
-            plt.savefig(filename)
-        #plt.show()
-        
-        print("\nVerification completed. "
-        "Check the plots plots to see the cumulative effect and the daily variations."
-        " Check to see if applied forcing agree with computed forcing.")
-
-    except FileNotFoundError as e:
-        print(f"Error: A required file was not found. {e}")
-    except KeyError as e:
-        print(f"Error: A required variable is missing from a file. {e}")
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
 
 
 def plot_conservative_temp(romsfile, filename=None):
@@ -1149,7 +925,7 @@ def plot_absolute_salinity(romsfile, filename=None):
 
 
 
-def main(exp_name, useflux=True):
+def main(exp_name, useflux=True, diurnal=True):
     """ 
     - Makes flux forcing file or bulk forcing file
     - Run current compiled ROMS model using the flux forcing file 
@@ -1160,7 +936,7 @@ def main(exp_name, useflux=True):
     if useflux:
         make_flux_force_file()
     else:
-        make_bulkforce_file()
+        make_bulkforce_file(diurnal)
     folder = os.path.join(RESULT_FOLDER, now() + exp_name)
     run_roms(folder)
     ext = '.png'
@@ -1215,14 +991,44 @@ def plots():
             #calculate_roms_cell_volume(romsfile)
 
 
+def plot_kaihc(ext='.png'):
+    kaifolder = find_latest_run_folder('_kaihc')
+    print(kaifolder)
+    root = os.path.join(RESULT_FOLDER, kaifolder)
+    for experiment in os.listdir(root):
+        if experiment.startswith('U10_'):
+            folder = os.path.join(root, experiment)
+            romsfile = os.path.join(folder,  f'KHC-his.nc-{experiment}')
+            forcing_file = os.path.join(folder, f'roms_bulkforce.nc-{experiment}')
+            plot_density_hovmuller(romsfile,
+                           maxdensity=0.0,
+                           filename=os.path.join(folder, 'density_hovmuller' +ext)
+                           )
+            plot_speed_hovmuller(romsfile,
+                         filename=os.path.join(folder, 'speed_hovmuller' +ext)
+                         )
+
+            plot_hodograph([romsfile], savefile=True)
+            plot_conservative_temp(romsfile, filename=os.path.join(folder, 'conservative_temp' +ext))
+            plot_absolute_salinity(romsfile, filename=os.path.join(folder, 'absolute_salinity' +ext))
+
+
+
 if __name__ == "__main__":
-    #main(exp_name='_exp19_strat_no_F_swrad_m300_bulk_LW_down_400_Uwind_10_Qair_80_Tair_20_Pair_1020',
-    #     useflux=False)
-    #folder=os.path.join(RESULT_FOLDER, '2025-09-04T213252_exp10_strat_no_F_cooling_100_xstress_0p1')
-    #history_file = os.path.join(folder, 'roms_his.nc')
-    #forcing_file = os.path.join(folder, 'roms_frc.nc')
-    #verify_heat_content(history_file, forcing_file, filename=os.path.join(folder, 'verify_heat_content.png'))
-    plots()
+    #main(exp_name='_exp30_Ninfo_1_strat_F_swradmax_800_bulk_Uwind_5_cloud_0_Qair_80_Tair_20_Pair_1020',
+    #     useflux=False, diurnal=True)
+    #folder=os.path.join(RESULT_FOLDER, '2026-01-21T081848_exp24_Ninfo_1_strat_F_swrad_300_bulk_Uwind_5_cloud_0_Qair_80_Tair_10_Pair_1020')
+    folder = os.path.join(RESULT_FOLDER, find_latest_run_folder('_exp30'))
+    history_file = os.path.join(folder, 'roms_his.nc')
+    forcing_file = os.path.join(folder, 'roms_frc.nc')
+    # folder=os.path.join(RESULT_FOLDER, '2025-12-18_kaihc','U10_5-cloud_0-swrad_300')
+    # history_file = os.path.join(folder, 'KHC-his.nc-U10_5-cloud_0-swrad_300')
+    # forcing_file = os.path.join(folder, 'roms_bulkforce.nc-U10_5-cloud_0-swrad_300')
+
+    verify_heat_content(history_file, forcing_file, filename=os.path.join(folder, 'verify_heat_content.png'))
+    #plots()
+
     #print_forcing_info(os.path.join(RESULT_FOLDER, 
     #                                '2025-03-30T164056_exp6_strat_no_F_cooling_m100_xstress_0p1',
     #                                'roms_frc.nc'))
+    #plot_kaihc()

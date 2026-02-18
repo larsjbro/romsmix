@@ -1,3 +1,4 @@
+import re
 import os
 import glob
 import subprocess
@@ -23,6 +24,20 @@ NANOSEC_PER_SECOND = 1e9
 def now():
     """Returns current date time on isoformat: yyyy-mm-ddThhmmss"""
     return datetime.now().isoformat("T", "seconds").replace(':', '')
+
+
+def extract_experiment_number(filename_string):
+    """
+    Extracts the digits following '_exp' in a ROMS simulation string.
+    """
+    # Search for '_exp' followed by one or more digits (\d+)
+    match = re.search(r'_exp(\d+)', filename_string)
+    
+    if match:
+        return int(match.group(1))
+    
+    return None
+
 
 def print_forcing_info(filename, names=None):
     f = Dataset(filename, 'r')
@@ -804,6 +819,60 @@ def verify_heat_content(his_file: str, frc_file: str, filename: str=''):
         print(f"An unexpected error occurred: {e}")
         print(f"Debug: Error type was {type(e)}")
 
+def compare_heat_content(folder1: str, folder2: str, filename: str=''):
+    """
+    Calculates the total heat content in a ROMS simulation and compares it
+    with the cumulative heat flux input from a forcing file.
+    """
+    exp_num1 = extract_experiment_number(folder1)
+    exp_num2 = extract_experiment_number(folder2)
+
+    his_file1 = os.path.join(folder1, 'roms_his.nc')
+    frc_file1 = os.path.join(folder1, 'roms_frc.nc')
+    his_file2 = os.path.join(folder2, 'roms_his.nc')
+    frc_file2 = os.path.join(folder2, 'roms_frc.nc')
+
+
+    try:
+        # 3. Plotting
+        fig, axes = plt.subplots(2, 1, figsize=(12, 12))
+       
+        for num, his_file, frc_file in [(exp_num1, his_file1, frc_file1), 
+                                        (exp_num2, his_file2, frc_file2)]:
+            ds_his = xr.open_dataset(his_file)
+            ds_frc = xr.open_dataset(frc_file)
+
+            # 1. Calculate Model Side
+            total_hc, rate_hc, area = calculate_model_heat_stats(ds_his)
+            
+            # 2. Calculate Forcing Side
+            forcing_flux, cum_forcing = calculate_forcing_heat_stats(ds_frc, ds_his, area)
+       
+
+            total_hc.plot(ax=axes[0], label=f'Model Heat Change exp.nr={num}', marker='o')
+            cum_forcing.plot(ax=axes[0], label=f'Cumulative Forcing Input exp.nr={num}', marker='x', linestyle='--')
+            rate_hc.plot(ax=axes[1], label=f'Model Heat Rate (W) exp.nr={num}', marker='o')
+            forcing_flux.plot(ax=axes[1], label=f'Total Forcing Flux (W) exp.nr={num}', marker='x', linestyle='--')
+
+        axes[0].set_title('Comparison: Total Heat Content vs. Cumulative Flux')
+        axes[0].legend()
+        axes[0].grid(True)
+
+        axes[1].set_title('Comparison: Heat Change Rate')
+        axes[1].legend()
+        axes[1].grid(True)
+
+        plt.tight_layout()
+        if filename:
+            plt.savefig(filename)
+        # plt.show()
+    except FileNotFoundError as e:
+        print(f"Error: A required file was not found. {e}")
+    except KeyError as e:
+        print(f"Error: A required variable is missing from a file. {e}")
+    except Exception as e:
+        print(f"An unexpected error occurred: {e}")
+        print(f"Debug: Error type was {type(e)}")
 
 def plot_conservative_temp(romsfile, filename=None):
     """Open history files and plot conservative temperature profiles"""
@@ -1018,14 +1087,18 @@ if __name__ == "__main__":
     #main(exp_name='_exp30_Ninfo_1_strat_F_swradmax_800_bulk_Uwind_5_cloud_0_Qair_80_Tair_20_Pair_1020',
     #     useflux=False, diurnal=True)
     #folder=os.path.join(RESULT_FOLDER, '2026-01-21T081848_exp24_Ninfo_1_strat_F_swrad_300_bulk_Uwind_5_cloud_0_Qair_80_Tair_10_Pair_1020')
-    folder = os.path.join(RESULT_FOLDER, find_latest_run_folder('_exp30'))
-    history_file = os.path.join(folder, 'roms_his.nc')
-    forcing_file = os.path.join(folder, 'roms_frc.nc')
+    # folder = os.path.join(RESULT_FOLDER, find_latest_run_folder('_exp30'))
+    # history_file = os.path.join(folder, 'roms_his.nc')
+    # forcing_file = os.path.join(folder, 'roms_frc.nc')
     # folder=os.path.join(RESULT_FOLDER, '2025-12-18_kaihc','U10_5-cloud_0-swrad_300')
     # history_file = os.path.join(folder, 'KHC-his.nc-U10_5-cloud_0-swrad_300')
     # forcing_file = os.path.join(folder, 'roms_bulkforce.nc-U10_5-cloud_0-swrad_300')
 
-    verify_heat_content(history_file, forcing_file, filename=os.path.join(folder, 'verify_heat_content.png'))
+    # verify_heat_content(history_file, forcing_file, filename=os.path.join(folder, 'verify_heat_content.png'))
+    exp1, exp2 = ('_exp28', '_exp29')
+    folder1 = os.path.join(RESULT_FOLDER, find_latest_run_folder(exp1))
+    folder2 = os.path.join(RESULT_FOLDER, find_latest_run_folder(exp2))
+    compare_heat_content(folder1, folder2, filename=os.path.join(folder2, f'compare_heat_content{exp1}{exp2}.png'))
     #plots()
 
     #print_forcing_info(os.path.join(RESULT_FOLDER, 

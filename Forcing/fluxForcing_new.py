@@ -874,6 +874,76 @@ def compare_heat_content(folder1: str, folder2: str, filename: str=''):
         print(f"An unexpected error occurred: {e}")
         print(f"Debug: Error type was {type(e)}")
 
+    
+def plot_heat_flux_components(frc_file: str, his_file: str, filename=None):
+    """
+    Plots individual heat flux components and their sum.
+    Radiative: From ds_frc
+    Turbulent (Latent/Sensible): From ds_his
+    """
+    ds_frc = xr.open_dataset(frc_file)
+    ds_his = xr.open_dataset(his_file)
+
+    _, frc_days = robust_time_conversion(ds_frc['ocean_time'])
+    _, his_days = robust_time_conversion(ds_his['ocean_time'])
+  
+    # 1. Radiative Fluxes (Forcing)
+    sw = ds_frc['swrad'].mean(dim=['eta_rho', 'xi_rho'])
+    
+    # Net Longwave calculation
+    if 'lwrad' in ds_frc:
+        lw_net = ds_frc['lwrad'].mean(dim=['eta_rho', 'xi_rho'])
+    elif 'lwrad_down' in ds_frc and ds_his is not None:
+        epsilon, sigma = 0.97, 5.67e-8
+        sst_k = ds_his['temp'].isel(s_rho=-1).mean(dim=['eta_rho', 'xi_rho']) + 273.15
+        sst_k = ds_his['temp'].isel(s_rho=-1).mean(dim=['eta_rho', 'xi_rho']) + 273.15
+        lw_up = (-(epsilon * sigma * sst_k**4)).assign_coords(ocean_time=his_days)
+        lw_down = ds_frc['lwrad_down'].mean(dim=['eta_rho', 'xi_rho'])
+        # Interpolate upgoing LW to match forcing time
+        lw_net = lw_down + lw_up.interp(ocean_time=frc_days)
+    else:
+        lw_net = xr.zeros_like(sw)
+
+    # 2. Turbulent Fluxes (History - using ROMS standard variable names)
+    # latent heat flux is often 'lhflux' and sensible is 'shflux' in history files
+    latname = 'latent' #'lhflux'
+    senname = "sensible" # 'shflux'
+    latent = ds_his[latname].mean(dim=['eta_rho', 'xi_rho']).assign_coords(ocean_time=his_days) if latname in ds_his else 0
+    sensible = ds_his[senname].mean(dim=['eta_rho', 'xi_rho']).assign_coords(ocean_time=his_days) if senname in ds_his else 0
+
+    # 3. Align Turbulent Fluxes to Forcing Time
+    latent_interp = latent.interp(ocean_time=frc_days) if isinstance(latent, xr.DataArray) else 0
+    sensible_interp = sensible.interp(ocean_time=frc_days) if isinstance(sensible, xr.DataArray) else 0
+    
+    # Calculate Net
+    net_flux = sw + lw_net + latent_interp + sensible_interp
+
+    # 4. Plotting
+    plt.figure(figsize=(12, 7))
+    plt.plot(frc_days, sw, label='Shortwave (Into Water)', color='gold', alpha=0.8)
+    plt.plot(frc_days, lw_net, label='Net Longwave', color='red', alpha=0.7)
+    plt.plot(frc_days, latent_interp, label='Latent (From History)', color='blue', alpha=0.6)
+    plt.plot(frc_days, sensible_interp, label='Sensible (From History)', color='green', alpha=0.6)
+    
+    # Bold Net Flux
+    plt.plot(frc_days, net_flux, color='black', linewidth=2.5, label='NET HEAT FLUX')
+    
+    # Shade regions for clarity
+    plt.fill_between(frc_days, net_flux, 0, where=(net_flux > 0), color='orange', alpha=0.2, label='Heating Ocean')
+    plt.fill_between(frc_days, net_flux, 0, where=(net_flux < 0), color='cyan', alpha=0.2, label='Cooling Ocean')
+
+    plt.axhline(0, color='black', linestyle='--', linewidth=1)
+    plt.title('Surface Heat Flux Components (Positive = Heating Ocean)')
+    plt.xlabel('Time (Days)')
+    plt.ylabel('Flux (W/m²)')
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.grid(True, alpha=0.2)
+    plt.tight_layout()
+    if filename:
+        plt.savefig(filename)
+    # plt.show()
+
+
 def plot_conservative_temp(romsfile, filename=None):
     """Open history files and plot conservative temperature profiles"""
     f = Dataset(romsfile, 'r')
@@ -1087,18 +1157,21 @@ if __name__ == "__main__":
     #main(exp_name='_exp30_Ninfo_1_strat_F_swradmax_800_bulk_Uwind_5_cloud_0_Qair_80_Tair_20_Pair_1020',
     #     useflux=False, diurnal=True)
     #folder=os.path.join(RESULT_FOLDER, '2026-01-21T081848_exp24_Ninfo_1_strat_F_swrad_300_bulk_Uwind_5_cloud_0_Qair_80_Tair_10_Pair_1020')
-    # folder = os.path.join(RESULT_FOLDER, find_latest_run_folder('_exp30'))
-    # history_file = os.path.join(folder, 'roms_his.nc')
-    # forcing_file = os.path.join(folder, 'roms_frc.nc')
+    folder = os.path.join(RESULT_FOLDER, find_latest_run_folder('_exp30'))
+    history_file = os.path.join(folder, 'roms_his.nc')
+    forcing_file = os.path.join(folder, 'roms_frc.nc')
     # folder=os.path.join(RESULT_FOLDER, '2025-12-18_kaihc','U10_5-cloud_0-swrad_300')
     # history_file = os.path.join(folder, 'KHC-his.nc-U10_5-cloud_0-swrad_300')
     # forcing_file = os.path.join(folder, 'roms_bulkforce.nc-U10_5-cloud_0-swrad_300')
 
     # verify_heat_content(history_file, forcing_file, filename=os.path.join(folder, 'verify_heat_content.png'))
-    exp1, exp2 = ('_exp28', '_exp29')
-    folder1 = os.path.join(RESULT_FOLDER, find_latest_run_folder(exp1))
-    folder2 = os.path.join(RESULT_FOLDER, find_latest_run_folder(exp2))
-    compare_heat_content(folder1, folder2, filename=os.path.join(folder2, f'compare_heat_content{exp1}{exp2}.png'))
+    plot_heat_flux_components(forcing_file, history_file, filename=os.path.join(folder, 'heat_flux_components.png'))
+
+    # exp1, exp2 = ('_exp28', '_exp29')
+    # folder1 = os.path.join(RESULT_FOLDER, find_latest_run_folder(exp1))
+    # folder2 = os.path.join(RESULT_FOLDER, find_latest_run_folder(exp2))
+    # compare_heat_content(folder1, folder2, filename=os.path.join(folder2, f'compare_heat_content{exp1}{exp2}.png'))
+
     #plots()
 
     #print_forcing_info(os.path.join(RESULT_FOLDER, 

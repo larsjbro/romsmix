@@ -893,10 +893,11 @@ def plot_heat_flux_components(frc_file: str, his_file: str, filename=None):
     # Net Longwave calculation
     if 'lwrad' in ds_frc:
         lw_net = ds_frc['lwrad'].mean(dim=['eta_rho', 'xi_rho'])
+    #ta vekk, forsiktig med midling av feltet
     elif 'lwrad_down' in ds_frc and ds_his is not None:
         epsilon, sigma = 0.97, 5.67e-8
         sst_k = ds_his['temp'].isel(s_rho=-1).mean(dim=['eta_rho', 'xi_rho']) + 273.15
-        sst_k = ds_his['temp'].isel(s_rho=-1).mean(dim=['eta_rho', 'xi_rho']) + 273.15
+        #sst_k = ds_his['temp'].isel(s_rho=0).mean(dim=['eta_rho', 'xi_rho']) + 273.15
         lw_up = (-(epsilon * sigma * sst_k**4)).assign_coords(ocean_time=his_days)
         lw_down = ds_frc['lwrad_down'].mean(dim=['eta_rho', 'xi_rho'])
         # Interpolate upgoing LW to match forcing time
@@ -1157,14 +1158,14 @@ if __name__ == "__main__":
     #main(exp_name='_exp30_Ninfo_1_strat_F_swradmax_800_bulk_Uwind_5_cloud_0_Qair_80_Tair_20_Pair_1020',
     #     useflux=False, diurnal=True)
     #folder=os.path.join(RESULT_FOLDER, '2026-01-21T081848_exp24_Ninfo_1_strat_F_swrad_300_bulk_Uwind_5_cloud_0_Qair_80_Tair_10_Pair_1020')
-    folder = os.path.join(RESULT_FOLDER, find_latest_run_folder('_exp30'))
+    folder = os.path.join(RESULT_FOLDER, find_latest_run_folder('_exp28'))
     history_file = os.path.join(folder, 'roms_his.nc')
     forcing_file = os.path.join(folder, 'roms_frc.nc')
     # folder=os.path.join(RESULT_FOLDER, '2025-12-18_kaihc','U10_5-cloud_0-swrad_300')
     # history_file = os.path.join(folder, 'KHC-his.nc-U10_5-cloud_0-swrad_300')
     # forcing_file = os.path.join(folder, 'roms_bulkforce.nc-U10_5-cloud_0-swrad_300')
 
-    # verify_heat_content(history_file, forcing_file, filename=os.path.join(folder, 'verify_heat_content.png'))
+    #verify_heat_content(history_file, forcing_file, filename=os.path.join(folder, 'verify_heat_content.png'))
     plot_heat_flux_components(forcing_file, history_file, filename=os.path.join(folder, 'heat_flux_components.png'))
 
     # exp1, exp2 = ('_exp28', '_exp29')

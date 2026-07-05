@@ -41,44 +41,53 @@ def mixing_regime_summary(romsfile, tke_threshold=1e-6):
 
     f = Dataset(romsfile, 'r')
 
-    # --- Extract vertical coordinate at rho-points ---
+    # Extract vertical coordinate at rho-points 
     z_rho = f.variables['z_rho'][:,:,7,6]   # (nt, nz)
     z = z_rho[0,:]                          # (nz,)
 
     z_w   = f.variables['z_w'][:,:,7,6]     # (nt, nz+1)
     z_w_1d = z_w[0,:]                       # 1D (nz+1)
 
-    # --- Extract variables ---
+    # Extract variables
     rho = f.variables['rho'][:,:,7,6]       # (nt, nz)
     u   = f.variables['u'][:,:,7,6]
     v   = f.variables['v'][:,:,7,6]
     tke = f.variables['tke'][:,:,7,6]
 
     nt, nz = rho.shape
-
-    
+   
     Ri = gradient_richardson_number(rho, u, v, z)
+
+    # Initialize with NaN so "unclassified" stays NaN
+    stability = np.full_like(Ri, np.nan, dtype=float)
+
+    valid = ~np.isnan(Ri)
 
     # Stability classification
     # 0 = convective, 1 = shear-driven, 2 = stable
-    stability = np.zeros_like(Ri)
-    stability[(Ri >= 0) & (Ri < 0.25)] = 1
-    stability[Ri >= 0.25] = 2
+    # Shear-driven: 0 <= Ri < 0.25
+    stability[(Ri >= 0) & (Ri < 0.25) & valid] = 1
+
+    # Stable: Ri >= 0.25
+    stability[(Ri >= 0.25) & valid] = 2
+
+    # Convective: Ri < 0
+    stability[(Ri < 0) & valid] = 0
 
     # Fractions 
     total_points = nt * nz
-    convective_fraction = np.sum(stability == 0) / total_points
-    shear_fraction      = np.sum(stability == 1) / total_points
-    stable_fraction     = np.sum(stability == 2) / total_points
+    n_valid = np.sum(valid)
+    n_undefined = np.sum(~valid)
+    convective_fraction = np.nansum(stability == 0) / n_valid
+    shear_fraction      = np.nansum(stability == 1) / n_valid
+    stable_fraction     = np.nansum(stability == 2) / n_valid
+    # Undefined fraction (relative to total)
+    undefined_fraction = n_undefined / (n_valid + n_undefined)
 
-    # --- Mixed layer depth (from TKE) ---
+    # Mixed layer depth (from TKE) 
     # For each time, find deepest depth where TKE > threshold
-    mld_times = []
-    for i in range(nt):
-        active = np.where(tke[i,:] > tke_threshold)[0]
-        if len(active) > 0:
-            deepest = z_w_1d[active[0]]  # use z_w, not z_rho   # deepest, since z_w_1d goes -200 → 0
-            mld_times.append(deepest)
+    #mld_times = compute_mld_tke(f, i=7, j=6, tke_factor=tke_threshold, adaptive=False)
+    mld_times = compute_mld_density(f, i=7, j=6, drho_crit=0.03)
 
     mixed_layer_depth = np.nanmean(mld_times)
 
@@ -88,7 +97,8 @@ def mixing_regime_summary(romsfile, tke_threshold=1e-6):
         "mixed_layer_depth": mixed_layer_depth,
         "convective_fraction": convective_fraction,
         "shear_fraction": shear_fraction,
-        "stable_fraction": stable_fraction
+        "stable_fraction": stable_fraction,
+        "undefined_fraction": undefined_fraction,
     }
 
 
@@ -343,7 +353,7 @@ def _create_3x3_mixing_heatmap(csv_file, outname="mixing_heatmap.png"):
     # Load CSV
     df = pd.read_csv(csv_file)
 
-    winds = [5, 10, 15]
+    winds = [15, 10, 5] #[5, 10, 15]
     clouds = [0.0, 0.5, 1.0]
 
     # Prepare matrices
@@ -437,7 +447,6 @@ def gradient_richardson_number(rho, u, v, z, g=9.81, rho0=1025):
     return Ri_g
 
 
-
 def now():
     """Returns current date time on isoformat: yyyy-mm-ddThhmmss"""
     return datetime.now().isoformat("T", "seconds").replace(':', '')
@@ -527,6 +536,7 @@ def make_bulkforce_file(diurnal=True, sw_amplitude=800.0, cloud=0.0, u_wind=15.0
     
     # Antar at timevec er i DAGER. Faseforskyvning på 0.5 for å ha toppen ved middag (0.5 dager)
     phase_shift = 0.5
+    
     sw_amplitude_clouds = (1.0 - 0.6 * cloud**3) *sw_amplitude
     print(f"sw_amplitude_clouds: {sw_amplitude_clouds}")
     if diurnal:
@@ -992,8 +1002,81 @@ def plot_tke_difference_hovmuller(file1, file2, filename=None):
     f2.close()
 
 
-def plot_density_hovmuller(romsfile, maxdensity, filename=None):
-    """Open history files and plot Hovmuller density profiles"""
+def compute_mld_tke(f, i=7, j=6, tke_factor=1e-3, adaptive=True):
+    """
+    Compute TKE-based MLD using an adaptive threshold:
+        threshold = tke_factor * max(TKE)
+    Returns array of MLD depths (negative).
+    """
+    tke = f.variables["tke"][:, :, j, i]     # (nt, nz+1)
+    z_w = f.variables["z_w"][:, :, j, i]     # (nt, nz+1)
+
+    nt, nzp1 = tke.shape
+    mld_tke = np.full(nt, np.nan)
+
+    for t in range(nt):
+        tke_t = tke[t, :]
+        if adaptive:
+            tke_max = np.nanmax(tke_t)
+            threshold = tke_factor * tke_max
+        else:
+            threshold = tke_factor
+
+        active = np.where(tke_t > threshold)[0]
+        if len(active) > 0:
+            mld_tke[t] = z_w[t, active[0]]   # deepest active turbulence, since z_w goes -200 → 0
+
+    return mld_tke
+
+def compute_mld_density(f, i=7, j=6, drho_crit=0.03):
+    """
+    Compute density-based MLD using the criterion:
+        |rho(z) - rho(surface)| >= drho_crit
+
+    Parameters
+    ----------
+    f : netCDF4.Dataset
+        Open ROMS history/avg file.
+    i, j : int
+        Horizontal indices.
+    drho_crit : float
+        Density difference threshold (default 0.03 kg/m^3).
+
+    Returns
+    -------
+    mld : array (nt,)
+        Mixed layer depth (negative values).
+    """
+
+    rho = f.variables["rho"][:, :, j, i]     # (nt, nz)
+    z_r = f.variables["z_rho"][:, :, j, i]   # (nt, nz)
+
+    nt, nz = rho.shape
+    mld = np.full(nt, np.nan)
+
+    for t in range(nt):
+        rho_sfc = rho[t, -1]                 # surface density (last index)
+        diff = np.abs(rho[t, :] - rho_sfc)
+        idx = np.where(diff >= drho_crit)[0]
+
+        if len(idx) > 0:
+            mld[t] = z_r[t, idx[-1]]         # first depth satisfying criterion
+
+    return mld
+
+def compute_entrainment_rate(mld, time_days):
+    """
+    Compute entrainment rate dMLD/dt in m/day.
+    mld: array (nt,) of depths (negative)
+    time_days: array (nt,) of time in days
+    """
+    # Use numpy gradient for smooth derivative
+    entr = np.gradient(mld, time_days)
+    return entr
+
+
+def plot_density_hovmuller(romsfile, maxdensity, filename=None, MLD=False):
+    """Open history files and plot Hovmuller density profiles,  optionally with MLD line."""
     f = Dataset(romsfile, 'r')
 
     # Get vertical coordinate
@@ -1005,16 +1088,32 @@ def plot_density_hovmuller(romsfile, maxdensity, filename=None):
     # Get time
     otime = f.variables['ocean_time'][:]
     otime = otime/(24*3600.)
+    nt, nz = rho.shape
     ny = np.shape(rho)[1]
     dt = np.array([otime,]*ny).transpose()
 
     # Check if we should limit range
     if maxdensity > 0.0:
         rho[rho>maxdensity] = np.nan
-
-    # Open figure
     
-    plt.figure()
+    # Compute MLD if requested
+    ER = False
+    if MLD:
+        mld_rho = compute_mld_density(f, i=7, j=6, drho_crit=0.03)
+        #mld_tke_a = compute_mld_tke(f, i=7, j=6, tke_factor=1e-3)
+        mld_tke = compute_mld_tke(f, i=7, j=6, tke_factor=1e-6, adaptive=False)
+
+    if MLD and ER:
+        entr_rho = compute_entrainment_rate(mld_rho, otime)
+        entr_tke = compute_entrainment_rate(mld_tke, otime)
+
+        # Open figure
+    
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10,10), sharex=True)
+    else:
+        fig, ax1 = plt.subplots(1, 1, figsize=(10,10), sharex=True)
+
+    
     print(np.shape(dt))
     print(np.shape(rho))
     print(np.shape(z_r))
@@ -1022,14 +1121,44 @@ def plot_density_hovmuller(romsfile, maxdensity, filename=None):
     # Plot filled contours
 
     levels = np.linspace(25, 27, 51)
-    plt.contourf(dt, z_r, rho, levels=levels, cmap=cm.ocean_r)
+    im = ax1.contourf(dt, z_r, rho, levels=levels, cmap=cm.ocean_r)
 
-    # Add info 
-    plt.colorbar(label='Potential density anomaly [kg/m^3]')
-    plt.xlabel('Days')
-    plt.ylabel('Depth [m]')
-    plt.ylim([PLOT_DEPTH_MAX, 0])
-    plt.grid(axis='x')
+    # Add info to ax1 (Hovmüller panel)
+    cbar = fig.colorbar(im, ax=ax1)
+    cbar.set_label('Potential density anomaly [kg/m^3]')
+
+    ax1.set_xlabel('Days')
+    ax1.set_ylabel('Depth [m]')
+    ax1.set_ylim([PLOT_DEPTH_MAX, 0])
+    ax1.grid(axis='x')
+
+    # plt.colorbar(label='Potential density anomaly [kg/m^3]')
+    # plt.xlabel('Days')
+    # plt.ylabel('Depth [m]')
+    # plt.ylim([PLOT_DEPTH_MAX, 0])
+    # plt.grid(axis='x')
+
+    # --- Plot MLD line ---
+    if MLD:
+        ax1.plot(otime, mld_rho, 'r-', linewidth=2, label='Density MLD')
+        ax1.plot(otime, mld_tke, 'b--', linewidth=2, label='TKE MLD')
+        ax1.legend()
+    if MLD and ER:
+        ax2.plot(otime, entr_rho, 'r-', label='dMLD/dt (density)')
+        ax2.plot(otime, entr_tke, 'b--', label='dMLD/dt (TKE)')
+        ax2.axhline(0, color='k', linewidth=1)
+        ax2.set_ylabel('Entrainment rate [m/day]')
+        ax2.set_xlabel('Days')
+        ax2.legend()
+
+        # plt.plot(otime, mld_rho, 'r-', linewidth=2,
+        #          label=r'MLD ($\Delta\rho = 0.03$ kg m$^{-3}$)')
+        # plt.plot(otime, mld_tke, 'b--', linewidth=2,
+        #          label=r'TKE MLD (threshold=1e-6)')
+        # plt.plot(otime, mld_tke_a, 'g--', linewidth=2,
+        #          label=r'TKE MLD (adaptive threshold)')
+        #plt.legend()
+
     if filename:
         plt.savefig(filename)
         plt.close()
@@ -2214,18 +2343,19 @@ def plots():
             root = os.path.join(RESULT_FOLDER, folder)
             romsfile = os.path.join(root, 'roms_his.nc')
             ext = '.png'
-            #plot_Ri_hovmuller(romsfile, filename=os.path.join(root, 'Ri_hovmuller' + ext))
-            #plot_stability_hovmuller(romsfile, filename=os.path.join(root, 'stability_hovmuller' + ext))
-            plot_tke_stability_hovmuller(romsfile, filename=os.path.join(root, 'tke_stability_hovmuller' + ext))
+            plot_Ri_hovmuller(romsfile, filename=os.path.join(root, 'Ri_hovmuller' + ext))
+            plot_stability_hovmuller(romsfile, filename=os.path.join(root, 'stability_hovmuller' + ext))
+            #plot_tke_stability_hovmuller(romsfile, filename=os.path.join(root, 'tke_stability_hovmuller' + ext))
 
             # plot_hodograph([romsfile], savefile=True)
             # verify_heat_content(romsfile, filename=os.path.join(root, 'verify_heat_content' + ext))
             # plot_conservative_temp(romsfile, filename=os.path.join(root, 'conservative_temp' +ext))
             
-            # plot_density_hovmuller(romsfile, maxdensity=0.0, filename=os.path.join(root, 'density_hovmuller' + ext))
+            #plot_density_hovmuller(romsfile, maxdensity=0.0, filename=os.path.join(root, 'density_hovmuller' + ext))
+            plot_density_hovmuller(romsfile, maxdensity=0.0, filename=os.path.join(root, 'density_hovmuller_mld' + ext), MLD=True)
             # plot_speed_hovmuller(romsfile, filename=os.path.join(root, 'speed_hovmuller' +ext))
             # plot_absolute_salinity(romsfile, filename=os.path.join(root, 'absolute_salinity' +ext))
-            plot_tke_hovmuller(romsfile, filename=os.path.join(root, 'tke_hovmuller' +ext))
+            # plot_tke_hovmuller(romsfile, filename=os.path.join(root, 'tke_hovmuller' +ext))
 
 
             #plot_heat_flux_components(romsfile, filename=os.path.join(folder, 'heat_flux_components' +ext))
@@ -2380,7 +2510,7 @@ def create_3x3_experiment_grid(plot_name="temp_hovmuller.png", diurnal=True):
     Rows: Wind Speeds (5, 10, 15)
     Cols: Cloud Values (0, 0.5, 1.0)
     """
-    winds = [5, 10, 15]
+    winds = [15, 10, 5]
     clouds = [0.0, 0.5, 1.0]
                      # (c, u)
     diurnal_experiment_no = {("0.0", 5): 30, ("0.0", 10): 28, ("0.0", 15): 32,
@@ -2401,10 +2531,8 @@ def create_3x3_experiment_grid(plot_name="temp_hovmuller.png", diurnal=True):
             cloud_str = f"{cloud:.1f}"
             num = experiment_no[(cloud_str, wind)]
             folder = os.path.join(RESULT_FOLDER, find_latest_experiment_folder(num)) 
-            
-            
+
             ax = axes[i, j]
-            
             
             img_path = os.path.join(folder, plot_name)
             
@@ -2419,10 +2547,10 @@ def create_3x3_experiment_grid(plot_name="temp_hovmuller.png", diurnal=True):
             ax.set_xticks([])
             ax.set_yticks([])
 
-
     # Add global Labels
     fig.suptitle(f"Experiment Matrix: {plot_name}", fontsize=20, y=0.95)
-    
+    num = experiment_no[("1.0", 15)]
+    folder = os.path.join(RESULT_FOLDER, find_latest_experiment_folder(num))
     # Label the axes of the 3x3 grid
     for ax, wind in zip(axes[:,0], winds):
         ax.set_ylabel(f"Wind {wind} m/s", rotation=90, size='large', fontweight='bold')
@@ -2437,16 +2565,23 @@ def create_3x3_experiment_grid(plot_name="temp_hovmuller.png", diurnal=True):
     print(f"Matrix saved to {filename}")
 
 def make_summary():
-    # for name in ['speed_hovmuller', 
-    #              "stability_hovmuller",
-    #              "tke_hovmuller",
-    #              "density_hovmuller",
-    #              "hodograph",
-    #              "Ri_hovmuller",
-    #              "conservative_temp",
-    #              ]:
-    #     create_3x3_experiment_grid(name + ".png", diurnal=True)
-    #     create_3x3_experiment_grid(name + ".png", diurnal=False)
+    """Make summary plots and mixing summary table for each 3 X 3 experiment
+    
+    The summary plots  and mixing summary table is stored in the 
+    experiment-folder no 54 and 55.
+    """
+    for name in [
+        'speed_hovmuller', 
+        "stability_hovmuller",
+        "tke_hovmuller",
+        "density_hovmuller",
+        "density_hovmuller_mld",
+        "hodograph",
+        "Ri_hovmuller",
+        "conservative_temp",
+        ]:
+        create_3x3_experiment_grid(name + ".png", diurnal=True)
+        create_3x3_experiment_grid(name + ".png", diurnal=False)
     
     create_3x3_mixing_summary_csv(csv_name="mixing_summary.csv", diurnal=True)
     create_3x3_mixing_summary_csv(csv_name="mixing_summary.csv", diurnal=False)

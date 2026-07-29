@@ -4,9 +4,12 @@ import glob
 import csv
 import pandas as pd
 import subprocess
+import shutil
 from datetime import datetime
 
 import numpy as np
+from scipy.integrate import cumulative_trapezoid
+
 import matplotlib.image as mpimg
 from matplotlib import pyplot as plt
 from matplotlib import cm
@@ -27,6 +30,23 @@ SEC_PER_DAY = 24.0 * 3600.0
 NANOSEC_PER_SECOND = 1e9
 
 PLOT_DEPTH_MAX = -60
+
+# Standard width for a single column in a thesis is ~3.3 inches (approx 8.5 cm)
+# The height is set using the golden ratio for a pleasing aesthetic
+FIG_WIDTH_HALF = 3.3
+FIG_HEIGTH_HALF = FIG_WIDTH_HALF * 0.618
+FIG_WIDTH_FULL = 2*3.3
+FIG_HEIGTH_FULL = FIG_WIDTH_FULL * 0.618
+
+
+DIURNAL_EXPERIMENT_NO = {("0.0", 5): 30, ("0.0", 10): 28, ("0.0", 15): 32,
+                            ("0.5", 5): 46, ("0.5", 10): 50, ("0.5", 15): 57,
+                            ("1.0", 5): 49, ("1.0", 10): 53, ("1.0", 15): 54,
+                     }
+STABLE_EXPERIMENT_NO = {("0.0", 5): 31, ("0.0", 10): 29, ("0.0", 15): 33,
+                        ("0.5", 5): 47, ("0.5", 10): 51, ("0.5", 15): 56,
+                        ("1.0", 5): 48, ("1.0", 10): 52, ("1.0", 15): 55,
+                    }
 
 def mixing_regime_summary(romsfile, tke_threshold=1e-6):
     """
@@ -604,7 +624,7 @@ def make_flux_force_file():
     # ot.units == 'seconds since 1970-01-01'
     #ot[:] = [0.0,7*24*3600.0] 
     num_time_steps = 169
-    timevec = np.linspace(0.0, 7*24*3600.0, num_time_steps) 
+    timevec = np.linspace(0.0, 7 * SEC_PER_DAY, num_time_steps) 
     ot[:] = timevec
 
     # Setting shortwave diurnal cycle
@@ -700,7 +720,7 @@ def plot_density_difference_hovmuller(file1, file2, filename=None):
     # 1. Get vertical coordinate and time from the first file
     # We assume the grids and time-steps are consistent between runs
     z_r = f1.variables['z_rho'][:,:,7,6]
-    otime = f1.variables['ocean_time'][:] / (24 * 3600.0) # Convert to days
+    otime = f1.variables['ocean_time'][:] / SEC_PER_DAY  #(24 * 3600.0) # Convert to days
     
     # 2. Extract density from both files at the representative point (7, 6)
     rho1 = f1.variables['rho'][:,:,7,6]
@@ -732,7 +752,7 @@ def plot_density_difference_hovmuller(file1, file2, filename=None):
     #plt.title(f'Density Difference: {os.path.basename(file1)} - {os.path.basename(file2)}')
     
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
 
     
@@ -743,7 +763,7 @@ def plot_density_difference_hovmuller(file1, file2, filename=None):
 def plot_Ri_hovmuller(romsfile, filename=None):
     # Open history file
     f = Dataset(romsfile, 'r')
-
+    mld = compute_mld_density(f, i=7, j=6, drho_crit=0.03, return_index=False)
     # Extract vertical coordinate at a single point
     z_rho = f.variables['z_rho'][:,:,7,6]
 
@@ -763,31 +783,56 @@ def plot_Ri_hovmuller(romsfile, filename=None):
     Ri = gradient_richardson_number(rho, u, v, z, g=9.81, rho0=1025)
    
     # Open figure
-    plt.figure()
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
 
+    # ["Convective", "Shear", "Stable"]
+    # ["R_i<0", "0 <= R_i < 0.25$)", "R_i >= 0.25"]
+
+    import matplotlib.colors as mcolors
+    colors = ['darkred', 'white', 'lightblue', 'darkblue']
+    colors = [
+        (0.0, 'darkred'),    # -1
+        (0.33, 'mistyrose'), # 0 (substitute for lightred)
+        (0.33, 'yellow'),    # Start of shear (0)
+        (0.42, 'yellow'),    # End of shear (0.25)
+        (0.42, 'aliceblue'), # Start of stable
+        (1.0, 'darkblue')    # 2
+    ]
+    cmap = mcolors.LinearSegmentedColormap.from_list("custom_shear_map", colors)
+    norm = mcolors.TwoSlopeNorm(vcenter=0.5, vmin=-1.0, vmax=2)
     # Plot filled contours
-    levels = np.linspace(-1, 1, 21)   # adjust as needed
-    plt.contourf(dt, z_rho, Ri, levels=levels, cmap='RdBu_r')
+    levels = np.arange(-1, 2.1, 0.25)  # adjust as needed
+    cbar = plt.contourf(dt, z_rho, Ri, levels=levels, cmap=cmap,
+                        norm=norm, extend='both')
+    plt.plot(otime, mld, '-', color='magenta', label='MLD')
 
-    # Add info
-    plt.colorbar(label='$R_i$')
-    plt.xlabel('Days')
-    plt.ylabel('Depth [m]')
+    cbar_obj = plt.colorbar(cbar, label='$R_i$', extend='both')
+    # Manually set ticks
+    custom_ticks = [-1,  0, 0.25, 1, 2]
+    cbar_obj.set_ticks(custom_ticks)
+    # Optional: Set labels if you want to name them differently
+    #cbar_obj.set_ticklabels(['-1', '0', '0.25', '1', '4'])
+
     plt.ylim([PLOT_DEPTH_MAX, 0])
+    plt.ylabel('Depth [m]')
     plt.grid(axis='x')
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
+    plt.xlabel('Days')
+    plt.legend(loc='lower left', framealpha=0.6)
 
     # Save or show
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
 
-    # Close file
     f.close()
 
 
-def plot_stability_hovmuller(romsfile, filename=None):
+def plot_stability_hovmuller(romsfile, filename=None, reverse_classification=True):
     # Open history file
     f = Dataset(romsfile, 'r')
+    mld = compute_mld_density(f, i=7, j=6, drho_crit=0.03, return_index=False)
 
     # Extract vertical coordinate at rho-points (nt, nz)
     z_rho = f.variables['z_rho'][:,:,7,6]
@@ -814,17 +859,26 @@ def plot_stability_hovmuller(romsfile, filename=None):
     stability = np.zeros_like(Ri)
     stability[(Ri >= 0) & (Ri < 0.25)] = 1
     stability[Ri >= 0.25] = 2
+    
 
     # Colormap for categories
     from matplotlib.colors import ListedColormap
     cmap = ListedColormap(["red", "yellow", "blue"])
-    labels = [r"Convective ($R_i<0$)", r"Shear ($0 \leq R_i<0.25$)", r"Stable ($R_i \geq 0.25$)"]
+    #labels = [r"Convective ($R_i<0$)", r"Shear ($0 \leq R_i<0.25$)", r"Stable ($R_i \geq 0.25$)"]
+    labels = [r"($R_i<0$)", r"($0 \leq R_i<0.25$)", r"($R_i \geq 0.25$)"]
+    labels = [r"Convective", r"Shear", r"Stable"]
+    if reverse_classification:
+         # 0 = stable, 1 = shear-driven, 2 = convective
+        stability = 2 - stability
+        labels = labels[::-1]
+        cmap = ListedColormap(["blue", "yellow", "red"])
 
     # Open figure
-    plt.figure(figsize=(10,6))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
 
     # Plot categorical Hovmöller
     plt.pcolormesh(dt, z_rho, stability, cmap=cmap, shading='auto')
+    plt.plot(otime, mld, '-c', label='MLD')
 
     # Colorbar with labels
     cbar = plt.colorbar(ticks=[0.33, 1, 1.66])
@@ -835,11 +889,14 @@ def plot_stability_hovmuller(romsfile, filename=None):
     plt.ylabel('Depth [m]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.grid(axis='x')
-    plt.title("Stability Classification (Richardson Number)")
+    #plt.title("Stability Classification (Richardson Number)")
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
+    plt.legend(loc='lower left', framealpha=0.6)
 
     # Save or show
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
 
     # Close file
@@ -876,7 +933,7 @@ def plot_tke_stability_hovmuller(romsfile, filename=None):
     dt = np.array([otime]*nz).transpose()   # (nt, nz)
     dt_tke = np.array([otime]*(nz+1)).transpose() 
     # --- Open figure ---
-    plt.figure(figsize=(10,6))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
 
     # --- Background: TKE contourf (log-scale) ---
     levels_tke = list(range(-20, 1, 2))
@@ -906,11 +963,13 @@ def plot_tke_stability_hovmuller(romsfile, filename=None):
     plt.ylabel('Depth [m]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.grid(axis='x')
-    plt.title("TKE + Stability Overlay")
+    #plt.title("TKE + Stability Overlay")
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
 
     # --- Save or show ---
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
 
     f.close()
@@ -919,7 +978,7 @@ def plot_tke_stability_hovmuller(romsfile, filename=None):
 def plot_tke_hovmuller(romsfile,  filename=None):
     # Open history files and plot profiles
     f = Dataset(romsfile, 'r')
-
+    mld = compute_mld_density(f, i=7, j=6, drho_crit=0.03, return_index=False)
     # Get vertical coordinate
     z_w = f.variables['z_w'][:,:,7,6]
 
@@ -933,22 +992,27 @@ def plot_tke_hovmuller(romsfile,  filename=None):
     dt = np.array([otime,]*ny).transpose()
 
     # Open figure
-    plt.figure()
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
 
     # Plot filled contours
     levels = list(range(-20, 1, 2))
     plt.contourf(dt,z_w,np.log(tke),levels=levels)
 
     # Add info 
-    plt.colorbar(label='log TKE [m^2/s^2]')
-    #plt.colorbar(label='TKE difference [m^2/s^2]')
-    plt.xlabel('Days')
-    plt.ylabel('Depth [m]')
+    plt.colorbar(label='log TKE [$m^2/s^2$]')
+    #plt.colorbar(label='TKE difference [$m^2/s^2$]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
+    plt.ylabel('Depth [m]')
+
+    plt.plot(otime, mld, '-', color='magenta', label='MLD')
     plt.grid(axis='x')
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
+    plt.xlabel('Days')
+    plt.legend(loc='lower left', framealpha=0.6)
     #plt.show()
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
     # plt.show()
 
@@ -988,14 +1052,14 @@ def plot_tke_difference_hovmuller(file1, file2, filename=None):
     cf = plt.contourf(dt, z_w, tke_diff, levels=levels, cmap=cm.RdBu_r)
 
     # 7. Formatting
-    plt.colorbar(cf, label=r'TKE Difference $\Delta log TKE$ [m^2/s^2]') 
+    plt.colorbar(cf, label=r'TKE Difference $\Delta log TKE$ [$m^2/s^2$]', extend='both') 
     plt.xlabel('Days')
     plt.ylabel('Depth [m]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.grid(axis='x')
     
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
     
     f1.close()
@@ -1028,7 +1092,7 @@ def compute_mld_tke(f, i=7, j=6, tke_factor=1e-3, adaptive=True):
 
     return mld_tke
 
-def compute_mld_density(f, i=7, j=6, drho_crit=0.03):
+def compute_mld_density(f, i=7, j=6, drho_crit=0.03, return_index=False):
     """
     Compute density-based MLD using the criterion:
         |rho(z) - rho(surface)| >= drho_crit
@@ -1041,18 +1105,24 @@ def compute_mld_density(f, i=7, j=6, drho_crit=0.03):
         Horizontal indices.
     drho_crit : float
         Density difference threshold (default 0.03 kg/m^3).
+    return_index : bool
+        If True both mld and mld_idx are returned, 
+        otherwise only mld.
 
     Returns
     -------
     mld : array (nt,)
         Mixed layer depth (negative values).
+    mld_idx: array (nt,)
+        Indices to mixed layer depth
     """
 
     rho = f.variables["rho"][:, :, j, i]     # (nt, nz)
     z_r = f.variables["z_rho"][:, :, j, i]   # (nt, nz)
 
-    nt, nz = rho.shape
-    mld = np.full(nt, np.nan)
+    nt, _nz = rho.shape
+    mld = np.full(nt, np.nan, dtype=float)
+    mld_idx = np.full(nt, 0, dtype=int)
 
     for t in range(nt):
         rho_sfc = rho[t, -1]                 # surface density (last index)
@@ -1060,8 +1130,10 @@ def compute_mld_density(f, i=7, j=6, drho_crit=0.03):
         idx = np.where(diff >= drho_crit)[0]
 
         if len(idx) > 0:
+            mld_idx[t] = idx[-1]
             mld[t] = z_r[t, idx[-1]]         # first depth satisfying criterion
-
+    if return_index:
+        return mld, mld_idx
     return mld
 
 def compute_entrainment_rate(mld, time_days):
@@ -1101,17 +1173,17 @@ def plot_density_hovmuller(romsfile, maxdensity, filename=None, MLD=False):
     if MLD:
         mld_rho = compute_mld_density(f, i=7, j=6, drho_crit=0.03)
         #mld_tke_a = compute_mld_tke(f, i=7, j=6, tke_factor=1e-3)
-        mld_tke = compute_mld_tke(f, i=7, j=6, tke_factor=1e-6, adaptive=False)
+        #mld_tke = compute_mld_tke(f, i=7, j=6, tke_factor=1e-6, adaptive=False)
 
     if MLD and ER:
         entr_rho = compute_entrainment_rate(mld_rho, otime)
-        entr_tke = compute_entrainment_rate(mld_tke, otime)
+        #entr_tke = compute_entrainment_rate(mld_tke, otime)
 
         # Open figure
     
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10,10), sharex=True)
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF), sharex=True)
     else:
-        fig, ax1 = plt.subplots(1, 1, figsize=(10,10), sharex=True)
+        fig, ax1 = plt.subplots(1, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF), sharex=True)
 
     
     print(np.shape(dt))
@@ -1125,12 +1197,18 @@ def plot_density_hovmuller(romsfile, maxdensity, filename=None, MLD=False):
 
     # Add info to ax1 (Hovmüller panel)
     cbar = fig.colorbar(im, ax=ax1)
-    cbar.set_label('Potential density anomaly [kg/m^3]')
+    #cbar.set_label('Potential density anomaly [kg/m^3]')
+    cbar.set_label(r'$\sigma_{\theta}$ [kg/$m^3$]')
 
     ax1.set_xlabel('Days')
     ax1.set_ylabel('Depth [m]')
     ax1.set_ylim([PLOT_DEPTH_MAX, 0])
     ax1.grid(axis='x')
+    # Manually setting ticks to 0-7 
+    #plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    ax1.set_xticks(np.arange(0, 8, 1))
+    ax1.set_xticklabels([str(i) for i in range(0, 8)])
+    ax1.set_xlim(-0.5, 7.5) # Adjusting limits to comfortably display the 0-7 range
 
     # plt.colorbar(label='Potential density anomaly [kg/m^3]')
     # plt.xlabel('Days')
@@ -1141,11 +1219,11 @@ def plot_density_hovmuller(romsfile, maxdensity, filename=None, MLD=False):
     # --- Plot MLD line ---
     if MLD:
         ax1.plot(otime, mld_rho, 'r-', linewidth=2, label='Density MLD')
-        ax1.plot(otime, mld_tke, 'b--', linewidth=2, label='TKE MLD')
+        #ax1.plot(otime, mld_tke, 'b--', linewidth=2, label='TKE MLD')
         ax1.legend()
     if MLD and ER:
         ax2.plot(otime, entr_rho, 'r-', label='dMLD/dt (density)')
-        ax2.plot(otime, entr_tke, 'b--', label='dMLD/dt (TKE)')
+        #ax2.plot(otime, entr_tke, 'b--', label='dMLD/dt (TKE)')
         ax2.axhline(0, color='k', linewidth=1)
         ax2.set_ylabel('Entrainment rate [m/day]')
         ax2.set_xlabel('Days')
@@ -1159,8 +1237,10 @@ def plot_density_hovmuller(romsfile, maxdensity, filename=None, MLD=False):
         #          label=r'TKE MLD (adaptive threshold)')
         #plt.legend()
 
+    # Adjust layout to fit thesis constraints
+    plt.tight_layout()
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
     # plt.show()
 
@@ -1178,7 +1258,7 @@ def plot_speed_difference_hovmuller(file1, file2, filename=None):
     # 1. Get vertical coordinate and time (assume consistency)
     # Using the same representative point (7, 6) as your density plots
     z_r = f1.variables['z_rho'][:, :, 7, 6]
-    otime = f1.variables['ocean_time'][:] / (24 * 3600.0) # Days
+    otime = f1.variables['ocean_time'][:] / SEC_PER_DAY  # (24 * 3600.0) # Days
     
     # 2. Extract Velocity components
     # Note: u and v are on staggered grids. For a point-comparison, 
@@ -1218,7 +1298,7 @@ def plot_speed_difference_hovmuller(file1, file2, filename=None):
     #plt.title(f'Speed Difference: {os.path.basename(file1)} - {os.path.basename(file2)}')
     
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
     
     f1.close()
@@ -1247,7 +1327,7 @@ def plot_speed_hovmuller(romsfile, filename=None):
     dt = np.array([otime,]*n).transpose()  # LJB
 
     # Open figure
-    plt.figure()
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
 
     # Plot filled contours
     #plt.contourf(dt,z_r,speed,levels=np.logspace(-6,0,25),norm=colors.LogNorm())
@@ -1258,12 +1338,14 @@ def plot_speed_hovmuller(romsfile, filename=None):
 
     # Add info 
     plt.colorbar(label='Speed [m/s]')
-    plt.xlabel('Days')
-    plt.ylabel('Depth [m]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
+    plt.ylabel('Depth [m]')
     plt.grid(axis='x')
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
+    plt.xlabel('Days')
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
     # plt.show()
 
@@ -1271,12 +1353,76 @@ def plot_speed_hovmuller(romsfile, filename=None):
     f.close()
 
 
+def plot_velocity_hovmuller(romsfile: str, filename: str = 'velocity_hovmoller.png') -> None:
+    """
+    Plots the U and V velocity components as Hovmöller diagrams (depth-time)
+    to reveal near-inertial oscillations.
+    """
+    f = Dataset(romsfile, 'r')
+    
+    # Extract ocean_time and depth
+    # ROMS vertical grids can be complex; assuming sigma layers
+    otime = f.variables['ocean_time'][:] / (24 * 3600.0)
+    u = f.variables['u'][:, :, 7, 6] # Example index for spatial location
+    v = f.variables['v'][:, :, 7, 6]
+    
+    # Define vertical levels (simplified)
+    #z = np.arange(u.shape[1]) 
+    z = f.variables['z_rho'][0,:,7,6]
+
+    # Theoretical Inertial Period calculation for 60 degrees North
+    # f = 2 * Omega * sin(lat)
+    lat = 60
+    omega = 7.2921e-5 # Earth's rotation rate in rad/s
+    f_coriolis = 2 * omega * np.sin(np.deg2rad(lat))
+    inertial_period_hours = (2 * np.pi / f_coriolis) / 3600.0 # ~13.8 hours
+    inertial_period_days = inertial_period_hours / 24.0
+
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(FIG_WIDTH_FULL, FIG_HEIGTH_FULL), sharex=True)
+    velmax = np.round(max(np.max(np.abs(u)),np.max(np.abs(v))), decimals = 1)
+    # Use a diverging colormap (e.g., RdBu_r) for velocity
+    mesh1 = ax1.pcolormesh(otime, z, u.T, cmap='RdBu_r', shading='auto', vmin=-velmax, vmax=velmax)
+    ax1.set_ylabel('Depth [m]', fontsize=10)
+    ax1.set_title('U-Velocity Component', fontsize=12)
+    fig.colorbar(mesh1, ax=ax1, label='m/s')
+    ax1.set_ylim([PLOT_DEPTH_MAX, 0])
+    ax1.grid(axis='x')
+    ax1.set_xticks(np.arange(0, 8, 1))
+    ax1.set_xticklabels([str(i) for i in range(0, 8)])
+    ax1.set_xlim(-0.5, 7.5) # Adjustin
+
+    mesh2 = ax2.pcolormesh(otime, z, v.T, cmap='RdBu_r', shading='auto', vmin=-velmax, vmax=velmax)
+    ax2.set_ylabel('Depth [m]', fontsize=10)
+    ax2.set_xlabel('Days', fontsize=10)
+    ax2.set_title('V-Velocity Component', fontsize=12)
+    fig.colorbar(mesh2, ax=ax2, label='m/s')
+    ax2.set_ylim([PLOT_DEPTH_MAX, 0])
+    ax2.grid(axis='x')
+    ax2.set_xticks(np.arange(0, 8, 1))
+    ax2.set_xticklabels([str(i) for i in range(0, 8)])
+    ax2.set_xlim(-0.5, 7.5) # Adjustin
+
+    # Add the inertial period scale bar on the V plot for reference
+    # We place it in a clear area, e.g., bottom right corner
+    x_pos = 0.6 
+    y_pos = -5
+    ax2.plot([x_pos, x_pos + inertial_period_days], [y_pos, y_pos], color='black', linewidth=3)
+    ax2.text(x_pos, y_pos -20, f'Inertial Period (~{inertial_period_hours:.1f} hrs)', fontsize=10, fontweight='bold')
+
+    plt.tight_layout()
+    
+    if filename:
+        fig.savefig(filename, dpi=300, bbox_inches='tight')
+        plt.close()
+    f.close()
+
 def plot_hodograph(romsfile, savefile=False, ext='.png'):
     # Check how many input files
     N = len(romsfile)
 
     # Plot hodograph
-    plt.figure()
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
 
     for i in range(N):
         # Open history files and plot profiles
@@ -1297,7 +1443,7 @@ def plot_hodograph(romsfile, savefile=False, ext='.png'):
         plt.axis('equal')
         if savefile:
             folder = os.path.dirname(romsfile[i])
-            plt.savefig(os.path.join(folder, 'hodograph' +ext))
+            plt.savefig(os.path.join(folder, 'hodograph' +ext), dpi=300, bbox_inches='tight')
         # plt.show()
 
         # Close file
@@ -1479,6 +1625,58 @@ def robust_time_conversion(time_da: xr.DataArray):
     time_days_da.attrs['units'] = 'days'
     return time_float_sec, time_days_da
 
+def plot_heat_flux_evolution(romsfile: str, filename: str = 'heat_flux_evolution.png') -> None:
+    """
+    Plots the Net Surface Heat Flux (Qnet) time-series and its cumulative integral.
+
+    Parameters
+    ----------
+    romsfile : str
+        Path to the ROMS history or averages NetCDF file.
+    output_file : str, optional
+        The filename for the generated plot.
+    """
+    f = Dataset(romsfile, 'r')
+    
+    # Extract time in days
+    otime = f.variables['ocean_time'][:] / SEC_PER_DAY  #(24 * 3600.0)
+    
+    # Assuming 'shflux' is the variable name for net surface heat flux (W/m^2)
+    # Adjust variable name if your output uses a different convention
+    qnet = f.variables['shflux'][:, 7, 6] 
+    
+    # Integrate flux over time (convert W/m^2 to J/m^2 by multiplying by seconds)
+    # We convert time in days back to seconds for the integration: dt (s) = 86400 * d(days)
+    dt_seconds = np.diff(otime) * 86400
+    heat_content = cumulative_trapezoid(qnet, x=otime*86400, initial=0)
+    
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF), sharex=True)
+    
+    # Top Panel: Time-Series of Qnet
+    ax1.plot(otime, qnet, color='tab:red', linewidth=0.8)
+    ax1.axhline(0, color='k', linestyle='--', linewidth=0.5)
+    ax1.set_ylabel(r'$Q_{net}$ [W m$^{-2}$]', fontsize=9)
+    ax1.grid(True, linestyle='--', alpha=0.5)
+    
+    # Bottom Panel: Cumulative Heat Content
+    ax2.plot(otime, heat_content, color='tab:blue', linewidth=0.8)
+    ax2.set_ylabel(r'$\int Q_{net} dt$ [J m$^{-2}$]', fontsize=9)
+    ax2.set_xlabel('Days', fontsize=9)
+    ax2.grid(True, linestyle='--', alpha=0.5)
+    
+    ax2.set_xlim(0, 7)
+    ax2.set_xticks(np.arange(0, 8, 1))
+    
+    for ax in [ax1, ax2]:
+        ax.tick_params(labelsize=8)
+    
+    fig.tight_layout()
+    
+    if filename:
+        fig.savefig(filename, dpi=300, bbox_inches='tight')
+    
+    f.close()
+
 
 def plot_thermodynamic_fluxes(his_file: str, frc_file: str, filename: str=''):
     """
@@ -1597,14 +1795,14 @@ def plot_thermodynamic_fluxes(his_file: str, frc_file: str, filename: str=''):
         
         title_eq = '$Q_H = Q_{SW} + Q_{LW}^{\\text{net}} + Q_S + Q_L$'
         ax.set_title(f'Thermodynamic Heat Flux Components (Grid Average)\nEquation: {title_eq}')
-        ax.set_xlabel('Time (Days)')
-        ax.set_ylabel('Heat Flux (W/m$^2$)')
+        ax.set_xlabel('Days')
+        ax.set_ylabel('Heat Flux [W/m$^2$]')
         ax.legend(loc='lower right')
         ax.grid(True, linestyle='--', alpha=0.6)
 
         plt.tight_layout()
         if filename:
-            plt.savefig(filename)
+            plt.savefig(filename, dpi=300, bbox_inches='tight')
             plt.close()
             print(f"Figure saved to {filename}")
         else:
@@ -1884,23 +2082,32 @@ def verify_heat_content(his_file: str, filename: str=''):
         forcing_flux, cum_forcing = calculate_forcing_heat_stats_2D_interior(ds_his)
 
         # 3. Plotting
-        fig, axes = plt.subplots(2, 1, figsize=(12, 12))
+        fig, axes = plt.subplots(2, 1, figsize=(FIG_HEIGTH_FULL, FIG_HEIGTH_FULL), sharex=True)
 
-        model_heat_change.plot(ax=axes[0], label='Model Heat Change', marker='o')
-        cum_forcing.plot(ax=axes[0], label='Cumulative Forcing Input', marker='x', linestyle='--')
-        axes[0].set_title('Comparison: Total Heat Content vs. Cumulative Flux')
-        axes[0].legend()
+        model_heat_change.plot(ax=axes[0], label='Model Heat Change') #, marker='o')
+        cum_forcing.plot(ax=axes[0], label='Cumulative Forcing Input', linestyle='--') #,marker='x')
+        #axes[0].set_title('Total Heat Content vs. Cumulative Flux')
+        axes[0].legend(framealpha=0.6)
         axes[0].grid(True)
+        axes[0].set_xticks(np.arange(0, 8, 1))
+        axes[0].set_xticklabels([str(i) for i in range(0, 8)])
+        axes[0].set_xlim(-0.5, 7.5) # Adjusting limits to comfortably display the 0-7 range
+        axes[0].set_xlabel('')
 
-        model_heat_rate.plot(ax=axes[1], label='Model Heat Rate (W/m^2)', marker='o')
-        forcing_flux.plot(ax=axes[1], label='Total Forcing Flux (W/m^2)', marker='x', linestyle='--')
-        axes[1].set_title('Comparison: Heat Change Rate')
-        axes[1].legend()
+        model_heat_rate.plot(ax=axes[1], label='Model Heat Rate [$W/m^2$]')  #, marker='o')
+        forcing_flux.plot(ax=axes[1], label=r'Total Forcing Flux [$W/m^2$]', linestyle='--')   # , marker='x')
+        #axes[1].set_title('Comparison: Heat Change Rate')
+        #axes[1].set_title('Heat Change Rate')
+        axes[1].legend(loc='best', framealpha=0.6)
         axes[1].grid(True)
+        axes[1].set_xticks(np.arange(0, 8, 1))
+        axes[1].set_xticklabels([str(i) for i in range(0, 8)])
+        axes[1].set_xlim(-0.5, 7.5) # Adjusting limits to comfortably display the 0-7 range
+        axes[1].set_xlabel('Days')
 
         plt.tight_layout()
         if filename:
-            plt.savefig(filename)
+            plt.savefig(filename, dpi=300, bbox_inches='tight')
             plt.close()
         # plt.show()
     except FileNotFoundError as e:
@@ -1964,7 +2171,7 @@ def compare_heat_content(folders: list[str], filename: str=''):
 
         plt.tight_layout()
         if filename:
-            plt.savefig(filename)
+            plt.savefig(filename, dpi=300, bbox_inches='tight')
             plt.close()
         # plt.show()
     except FileNotFoundError as e:
@@ -2004,7 +2211,7 @@ def plot_heat_flux_components(his_file: str, filename=None):
     net_flux = sw + lw_net + latent + sensible
 
     # 4. Plotting
-    plt.figure(figsize=(12, 7))
+    plt.figure(figsize=(FIG_WIDTH_FULL, FIG_HEIGTH_FULL))
     plt.plot(his_days, sw, label='Shortwave (Into Water)', color='gold', alpha=0.8)
     plt.plot(his_days, lw_net, label='Net Longwave', color='red', alpha=0.7)
     plt.plot(his_days, latent, label='Latent (From History)', color='blue', alpha=0.6)
@@ -2019,14 +2226,16 @@ def plot_heat_flux_components(his_file: str, filename=None):
     plt.fill_between(his_days, net_flux, 0, where=(net_flux < 0), color='cyan', alpha=0.2, label='Cooling Ocean')
 
     plt.axhline(0, color='black', linestyle='--', linewidth=1)
-    plt.title('Surface Heat Flux Components (Positive = Heating Ocean)')
-    plt.xlabel('Time (Days)')
-    plt.ylabel('Flux (W/m²)')
+    # plt.title('Surface Heat Flux Components (Positive = Heating Ocean)')
+    plt.xlabel('Days')
+    plt.ylabel('Flux [W/m²]')
     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.grid(True, alpha=0.2)
     plt.tight_layout()
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
     # plt.show()
 
@@ -2041,7 +2250,7 @@ def plot_temp_difference_hovmuller(file1, file2, filename=None):
     # 1. Get vertical coordinate and time (assuming consistency between runs)
     # Using the representative point (eta_rho=7, xi_rho=6)
     z_r = f1.variables['z_rho'][:, :, 7, 6]
-    otime = f1.variables['ocean_time'][:] / (24.0 * 3600.0) # Convert to days
+    otime = f1.variables['ocean_time'][:] / SEC_PER_DAY  #(24.0 * 3600.0) # Convert to days
     
     # 2. Extract Temperature from both files
     temp1 = f1.variables['temp'][:, :, 7, 6]
@@ -2077,7 +2286,7 @@ def plot_temp_difference_hovmuller(file1, file2, filename=None):
     plt.title(f'Temperature Difference: {os.path.basename(file1)} - {os.path.basename(file2)}')
     
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
     else:
         plt.show()
@@ -2098,7 +2307,7 @@ def plot_cons_temp_difference_hovmuller(file1, file2, filename=None):
 
     # 1. Get coordinates and grid info
     z_r = f1.variables['z_rho'][:, :, eta, xi]
-    otime = f1.variables['ocean_time'][:] / (24.0 * 3600.0)
+    otime = f1.variables['ocean_time'][:] / SEC_PER_DAY  #(24.0 * 3600.0)
     lat = 60.0 #f1.variables['lat_rho'][eta, xi]
     lon = 0.0 #f1.variables['lon_rho'][eta, xi]
     
@@ -2143,7 +2352,7 @@ def plot_cons_temp_difference_hovmuller(file1, file2, filename=None):
     #plt.title(f'Conservative Temp Diff: {os.path.basename(file1)} vs {os.path.basename(file2)}')
     
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
     
     f1.close()
@@ -2196,7 +2405,7 @@ def plot_conservative_temp(romsfile, filename=None):
 
     # Open figure
     
-    plt.figure()
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
     print(np.shape(dt))
     print(np.shape(CT))
     print(np.shape(z_rho))
@@ -2206,18 +2415,82 @@ def plot_conservative_temp(romsfile, filename=None):
     # plt.contourf(dt, z_rho, temp, 200, cmap=cm.ocean_r)
     levels = np.linspace(10, 22, 51)
     plt.contourf(dt, z_rho, CT, levels=levels, cmap=cm.ocean_r)
-    plt.colorbar(label=r'Conservative Temperature [$C^{\circ}$]')
+    #plt.colorbar(label=r'Conservative Temperature [$C^{\circ}$]')
+    plt.colorbar(label=r'$\Theta$ [$C^{\circ}$]')
     plt.xlabel('Days')
     plt.ylabel('Depth [m]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
     plt.grid(axis='x')
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
     # plt.show()
 
     # Close file
     f.close()
+
+def get_sst(f):
+    """Return SST and time"""
+
+    # Extracting temperature at the surface (index -1) for coordinates 7, 6
+    # temp variable is typically [time, s_rho, eta_rho, xi_rho]
+    sst = f.variables['temp'][:, -1, 7, 6] 
+    return sst
+
+
+def plot_sst_evolution(romsfile: str, filename: str = 'sst_evolution.png') -> None:
+    """
+    Extracts and plots the Sea Surface Temperature (SST) evolution.
+
+    This function reads a ROMS history file, extracts the temperature from the 
+    uppermost vertical grid layer at the specified spatial coordinates, and 
+    generates a time-series visualization. It follows the data extraction 
+    conventions used in existing project analysis scripts.
+
+    Parameters
+    ----------
+    romsfile : str
+        Path to the ROMS history or averages NetCDF file.
+    filename : str, optional
+        The filename for the generated plot, by default 'sst_evolution.png'.
+
+    Returns
+    -------
+    None
+    """
+    f = Dataset(romsfile, 'r')
+    sst = get_sst(f)
+     # Converting ocean_time from seconds to days
+    time = f.variables['ocean_time'][:]
+    time = time / SEC_PER_DAY  # (24 * 3600.0)
+
+    f.close()
+
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    
+    # Plotting the SST evolution
+    plt.plot(time, sst, # marker='.', markersize=2,
+             linestyle='-', color='tab:red', label='SST')
+
+    #plt.title('Sea Surface Temperature (SST) Evolution')
+    plt.xlabel('Days')
+    plt.ylabel('Temperature [°C]')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend()
+
+    # Manually setting ticks to 0-7 
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim(-0.5, 7.5) # Adjusting limits to comfortably display the 0-7 range
+
+    # Adjust layout to fit thesis constraints
+    plt.tight_layout()
+    
+    if filename:
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        print(f"SST plot successfully saved to {filename}")
+    
 
 def plot_absolute_salinity(romsfile, filename=None):
     """Open history files and plot absolute salinity profiles"""
@@ -2252,7 +2525,7 @@ def plot_absolute_salinity(romsfile, filename=None):
 
     # Open figure
     
-    plt.figure()
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
     print(np.shape(dt))
     print(np.shape(SA))
     print(np.shape(z_rho))
@@ -2268,8 +2541,10 @@ def plot_absolute_salinity(romsfile, filename=None):
     plt.ylabel('Depth [m]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.grid(axis='x')
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
     if filename:
-        plt.savefig(filename)
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
     # plt.show()
 
@@ -2343,23 +2618,31 @@ def plots():
             root = os.path.join(RESULT_FOLDER, folder)
             romsfile = os.path.join(root, 'roms_his.nc')
             ext = '.png'
-            plot_Ri_hovmuller(romsfile, filename=os.path.join(root, 'Ri_hovmuller' + ext))
-            plot_stability_hovmuller(romsfile, filename=os.path.join(root, 'stability_hovmuller' + ext))
-            #plot_tke_stability_hovmuller(romsfile, filename=os.path.join(root, 'tke_stability_hovmuller' + ext))
+            #plot_Ri_hovmuller(romsfile, filename=os.path.join(root, 'Ri_hovmuller' + ext))
+            # plot_stability_hovmuller(romsfile, filename=os.path.join(root, 'stability_hovmuller' + ext))
+            # plot_tke_stability_hovmuller(romsfile, filename=os.path.join(root, 'tke_stability_hovmuller' + ext))
 
             # plot_hodograph([romsfile], savefile=True)
-            # verify_heat_content(romsfile, filename=os.path.join(root, 'verify_heat_content' + ext))
+
+            #verify_heat_content(romsfile, filename=os.path.join(root, 'verify_heat_content' + ext))
+            # plot_heat_flux_evolution=verify_heat_content
+            # plot_heat_flux_evolution(romsfile, filename=os.path.join(root, 'heat_flux_evolution' + ext))
+
             # plot_conservative_temp(romsfile, filename=os.path.join(root, 'conservative_temp' +ext))
-            
-            #plot_density_hovmuller(romsfile, maxdensity=0.0, filename=os.path.join(root, 'density_hovmuller' + ext))
-            plot_density_hovmuller(romsfile, maxdensity=0.0, filename=os.path.join(root, 'density_hovmuller_mld' + ext), MLD=True)
+            # plot_sst_evolution(romsfile, filename=os.path.join(root, 'sst_evolution' +ext))
+
+            # plot_density_hovmuller(romsfile, maxdensity=0.0, filename=os.path.join(root, 'density_hovmuller' + ext))
+            # plot_density_hovmuller(romsfile, maxdensity=0.0, filename=os.path.join(root, 'density_hovmuller_mld' + ext), MLD=True)
             # plot_speed_hovmuller(romsfile, filename=os.path.join(root, 'speed_hovmuller' +ext))
+            # plot_velocity_hovmuller(romsfile, filename=os.path.join(root, 'velocity_hovmuller' +ext))
             # plot_absolute_salinity(romsfile, filename=os.path.join(root, 'absolute_salinity' +ext))
-            # plot_tke_hovmuller(romsfile, filename=os.path.join(root, 'tke_hovmuller' +ext))
+            plot_tke_hovmuller(romsfile, filename=os.path.join(root, 'tke_hovmuller' +ext))
+            #inertial_vs_wind(romsfile) #shear enhancement factor, coefficient of variation
 
 
-            #plot_heat_flux_components(romsfile, filename=os.path.join(folder, 'heat_flux_components' +ext))
-            # plot_thermodynamic_fluxes(romsfile, forcing_file, filename=os.path.join(root, 'thermodynamic_fluxes' + ext))
+            # plot_heat_flux_components(romsfile, filename=os.path.join(root, 'heat_flux_components' +ext))
+
+            #plot_thermodynamic_fluxes(romsfile, forcing_file, filename=os.path.join(root, 'thermodynamic_fluxes' + ext))
             #plt.show()
             #calculate_roms_cell_volume(romsfile)
 
@@ -2415,6 +2698,9 @@ def compare_results():
         # (43, 42), 
         # (44, 45), 
 
+        #delta TKE
+        (30, 28) #5 vs 10 m/s 0 cloud
+
         # compare increasing wind
         # (30, 28, 32), 
         # (39, 36, 35),
@@ -2426,7 +2712,7 @@ def compare_results():
         #(39,40) # diurnal 0.5,1
         
         #(30,46,49) #diurnal 0, 0.5, 1 fixed swcloudamplitude u=5
-        (31,47,48) #mean 0, 0.5, 1 fixed swcloudamplitude u=5
+        #(31,47,48) #mean 0, 0.5, 1 fixed swcloudamplitude u=5
 
 
         ]
@@ -2435,6 +2721,72 @@ def compare_results():
         folders = [os.path.join(RESULT_FOLDER, find_latest_run_folder(f'_exp{i}_')) for i in experiments]
         
         compare_heat_content(folders, filename=os.path.join(folders[-1], f'compare_heat_content{txt}.png'))
+
+
+def plot_forcing_comparison():
+    """compare_diurnal_vs_average"""
+    winds = [15, 10, 5]
+    clouds = [0.0, 0.5, 1.0]
+    
+    for i, wind in enumerate(winds):
+        for j, cloud in enumerate(clouds):
+
+            cloud_str = f"{cloud:.1f}"
+            num1 = DIURNAL_EXPERIMENT_NO[(cloud_str, wind)]
+            folder1 = os.path.join(RESULT_FOLDER, find_latest_experiment_folder(num1)) 
+
+            num2 = STABLE_EXPERIMENT_NO[(cloud_str, wind)]
+            folder2 = os.path.join(RESULT_FOLDER, find_latest_experiment_folder(num2)) 
+            filename = os.path.join(folder1, 'forcing_comparison.png')
+            romsfile1 = os.path.join(folder1, 'roms_his.nc')
+            romsfile2 = os.path.join(folder2, 'roms_his.nc')
+            plot_mld_sst_comparison(romsfile1, romsfile2, filename=filename)
+
+
+def plot_mld_sst_comparison(romsfile_diurnal, romsfile_avg, filename='forcing_comparison.png'):
+    """
+    Plots the comparative MLD and SST response for two different forcing regimes.
+    """
+    f1 = Dataset(romsfile_diurnal, 'r')
+    sst1 = get_sst(f1)
+    mld1 = compute_mld_density(f1)
+    time1 = f1.variables['ocean_time'][:]
+    time1 = time1 / SEC_PER_DAY 
+    f1.close()
+    f2 = Dataset(romsfile_avg, 'r')
+    sst2 = get_sst(f2)
+    mld2 = compute_mld_density(f2)
+    time2 = f2.variables['ocean_time'][:]
+    time2 = time2 / SEC_PER_DAY 
+    f2.close()
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF), sharex=True)
+
+    # 1. SST Comparison (The Thermodynamic Response)
+    ax1.plot(time1, sst1, color='tab:red', label='Diurnal')
+    ax1.plot(time2, sst2, color='tab:blue', linestyle='--', label='Average')
+    ax1.set_ylabel('SST [°C]')
+    ax1.legend(fontsize=7)
+    
+    ax1.set_xticks(np.arange(0, 8, 1))
+    ax1.set_xticklabels([str(i) for i in range(0, 8)])
+
+    # 2. MLD Evolution (The Result)
+    # Assuming MLD is computed from potential density sigma_theta
+    ax2.plot(time1, mld1, color='tab:red')
+    ax2.plot(time1, mld2, color='tab:blue', linestyle='--')
+    ax2.set_ylabel('MLD [m]')
+    ax2.set_xlabel('Days')
+    ax2.set_xticks(np.arange(0, 8, 1))
+    ax2.set_xticklabels([str(i) for i in range(0, 8)])
+
+    
+    # Highlight the "Timing" difference
+    ax2.grid(True, linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    if filename:
+        fig.savefig(filename, dpi=300, bbox_inches='tight')
 
 def compare_ncdiff():
     # døgnsyklys
@@ -2468,6 +2820,8 @@ def compare_ncdiff():
         (53, 52), # døgnsyklus vs ikke, vind 10 m/s, cloud 1.0
         (54, 55), # døgnsyklus vs ikke, vind 15 m/s, cloud 1.0
 
+        (28 , 30), #10m/s - 5m/s
+
 
         # compare increasing cloud and wind
         (30, 50),
@@ -2489,9 +2843,9 @@ def compare_ncdiff():
         #forcing_file = os.path.join(folder, 'roms_frc.nc')
         romsfile1 = os.path.join(folder1, 'roms_his.nc')
         romsfile2 = os.path.join(folder2, 'roms_his.nc')
-        plot_density_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'density_hovmuller_{difftxt}' +ext))
-        plot_speed_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'speed_hovmuller_{difftxt}' +ext))
-        plot_cons_temp_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'conservative_temp_{difftxt}' +ext))
+        #plot_density_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'density_hovmuller_{difftxt}' +ext))
+        #plot_speed_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'speed_hovmuller_{difftxt}' +ext))
+        #plot_cons_temp_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'conservative_temp_{difftxt}' +ext))
         plot_tke_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'tke_hovmuller_{difftxt}' +ext))
         # plot_density_hovmuller(romsfile,
         #                     maxdensity=0.0,
@@ -2510,18 +2864,18 @@ def create_3x3_experiment_grid(plot_name="temp_hovmuller.png", diurnal=True):
     Rows: Wind Speeds (5, 10, 15)
     Cols: Cloud Values (0, 0.5, 1.0)
     """
-    winds = [15, 10, 5]
-    clouds = [0.0, 0.5, 1.0]
-                     # (c, u)
-    diurnal_experiment_no = {("0.0", 5): 30, ("0.0", 10): 28, ("0.0", 15): 32,
+                     # (cloud, wind)
+    DIURNAL_EXPERIMENT_NO = {("0.0", 5): 30, ("0.0", 10): 28, ("0.0", 15): 32,
                             ("0.5", 5): 46, ("0.5", 10): 50, ("0.5", 15): 57,
                             ("1.0", 5): 49, ("1.0", 10): 53, ("1.0", 15): 54,
                      }
-    stable_experiment_no = {("0.0", 5): 31, ("0.0", 10): 29, ("0.0", 15): 33,
-                             ("0.5", 5): 47, ("0.5", 10): 51, ("0.5", 15): 56,
-                             ("1.0", 5): 48, ("1.0", 10): 52, ("1.0", 15): 55,
+    STABLE_EXPERIMENT_NO = {("0.0", 5): 31, ("0.0", 10): 29, ("0.0", 15): 33,
+                            ("0.5", 5): 47, ("0.5", 10): 51, ("0.5", 15): 56,
+                            ("1.0", 5): 48, ("1.0", 10): 52, ("1.0", 15): 55,
                      }
-    experiment_no = diurnal_experiment_no if diurnal else stable_experiment_no
+    winds = [15, 10, 5]
+    clouds = [0.0, 0.5, 1.0]
+    experiment_no = DIURNAL_EXPERIMENT_NO if diurnal else STABLE_EXPERIMENT_NO
     fig, axes = plt.subplots(3, 3, figsize=(18, 15))
     plt.subplots_adjust(wspace=0.2, hspace=0.3)
 
@@ -2564,6 +2918,198 @@ def create_3x3_experiment_grid(plot_name="temp_hovmuller.png", diurnal=True):
     plt.savefig(filename, bbox_inches='tight', dpi=300)
     print(f"Matrix saved to {filename}")
 
+
+def inertial_vs_wind(romsfile: str, drho_crit: float = 0.03):
+    """
+    Computes shear statistics using a dynamic MLD.
+    Uses accurate time-varying masking for mixed layer calculations.
+    """
+    f = Dataset(romsfile, 'r')
+    
+    # 1. Get MLD
+    mld_depths, mld_indices = compute_mld_density(f, drho_crit=drho_crit, return_index=True)
+    
+    # Check for NaNs in MLD depths
+    valid_depths = ~np.isnan(mld_depths)
+    
+    z_r = f.variables["z_rho"][:, :, 7, 6]
+    nt, nz = z_r.shape
+    
+    # 2. Calculate Shear
+    u = f.variables['u'][:, :, 7, 6]
+    v = f.variables['v'][:, :, 7, 6]
+    dz = np.abs(np.gradient(z_r, axis=1))
+    dudz = np.gradient(u, axis=1) / (dz + 1e-10)
+    dvdz = np.gradient(v, axis=1) / (dz + 1e-10)
+    shear_mag = np.sqrt(dudz**2 + dvdz**2)
+    
+    # 3. Create Masked Array for Mixed Layer
+    ml_shear = np.full_like(shear_mag, np.nan)
+    for t in np.flatnonzero(valid_depths):
+        # Use mld_indices directly as it is an integer array
+        idx = int(mld_indices[t])
+        ml_shear[t, idx:] = shear_mag[t, idx:]
+
+    # 4. Statistics (Vectorized)
+    mean_ts = np.nanmean(ml_shear, axis=1)
+    var_ts = np.nanvar(ml_shear, axis=1)
+    intermittency_factors = var_ts / (mean_ts**2 + 1e-10)
+    
+    mean_enhancement = np.nanmean(intermittency_factors)
+    
+    # 5. Peak-to-Mean Ratio
+    mean_shear_val = np.nanmean(ml_shear)
+    peak_shear_val = np.nanmean(np.nanmax(ml_shear, axis=1))
+    ratio = (peak_shear_val - mean_shear_val) / (mean_shear_val + 1e-10)
+    
+    print(f"--- Thesis Check: Intermittency Analysis ---")
+    print(f"Mean MLD: {np.nanmean(mld_depths)}")
+    print(f"Mean Shear Value: {mean_shear_val:.4f} s^-1")
+    print(f"Peak Shear Value: {peak_shear_val:.4f} s^-1")
+    print(f"Shear Enhancement Factor: {mean_enhancement:.2f}")
+    print(f"Peak-to-Mean Shear Ratio: {ratio:.1%}")
+    
+
+def inertial_vs_wind_old(romsfile: str, drho_crit: float = 0.03):
+    """
+    Computes shear ratios using dynamic MLD determined by density.
+    This version uses coordinate-based indexing to ensure grid-independence.
+    """
+    f = Dataset(romsfile, 'r')
+    
+    # 1. Compute density-based MLD
+    mld_depths, mld_indices = compute_mld_density(f,drho_crit=drho_crit, return_index=True)
+    
+    z_r = f.variables["z_rho"][:, :, 7, 6]  # (nt, nz)
+
+    nt, nz = z_r.shape
+    # Use the mean index across time for a consistent analysis slice
+    valid_depths = ~np.isnan(mld_depths)
+    mld_idx = int(np.mean(mld_indices[valid_depths]))
+    
+    # 2. Calculate Shear
+    u = f.variables['u'][:, :, 7, 6]
+    v = f.variables['v'][:, :, 7, 6]
+    
+    dz = np.abs(np.gradient(z_r, axis=1))
+    dudz = np.gradient(u, axis=1) / (dz + 1e-10)
+    dvdz = np.gradient(v, axis=1) / (dz + 1e-10)
+    shear_magnitude = np.sqrt(dudz**2 + dvdz**2)
+    shear_magnitude_in_mixed_layer = np.full_like(shear_magnitude, fill_value=np.nan)
+    # 3. Dynamic Index Calculation (Refined)
+    # Using the index determined by coordinate to slice shear_magnitude
+    # shear_magnitude is (nt, nz)
+    
+
+    # 3. Calculate Stats per time step for the MLD slice
+    # We slice at mld_indices[t] to capture the layer interface
+    intermittency_factors = []
+    for t in np.flatnonzero(valid_depths):
+        if np.isnan(mld_depths[t]):
+            continue
+        # Slice from MLD to sea surface
+        slice_data = shear_magnitude[t, mld_indices[t]:]
+        shear_magnitude_in_mixed_layer[t, mld_indices[t]:] = slice_data
+        if len(slice_data) > 1:
+            mean = np.mean(slice_data)
+            var = np.var(slice_data)
+            # Avoid division by zero
+            if mean > 1e-8:
+                intermittency_factors.append(var / (mean**2))
+
+    mean_enhancement = np.mean(intermittency_factors)
+    
+    print(f"--- Thesis Check (Intermittency Analysis) ---")
+    print(f"Shear Enhancement Factor: {mean_enhancement:.2f}")
+    print("Interpretation: A factor > 1 indicates highly intermittent (pulsed) shear.")
+
+    # 4. Shear peak to mean ratio Calculation:
+
+    # Approximate calculation
+    # mean_shear_val: average shear within the mixed layer
+    mean_shear_val0 = np.mean(shear_magnitude[:, mld_idx:])
+    # peak_shear_val: mean of the time-varying peak shear
+    peak_shear_val0 = np.mean(np.max(shear_magnitude[:, mld_idx:], axis=1))
+    ratio0 = (peak_shear_val0 - mean_shear_val0) / (mean_shear_val0 + 1e-10)
+
+    # Accurate calculation
+    # mean_shear_val: average shear within the mixed layer
+    mean_shear_val = np.nanmean(shear_magnitude_in_mixed_layer)
+    # peak_shear_val: mean of the time-varying peak shear
+    peak_shear_val = np.mean(np.nanmax(shear_magnitude_in_mixed_layer, axis=1))
+
+    ratio = (peak_shear_val - mean_shear_val) / (mean_shear_val + 1e-10)
+    
+    print(f"--- Thesis Check Calculation (Refined) ---")
+    print(f"Mean MLD Index: {mld_idx}")
+    print(f"Mean MLD: {np.nanmean(mld_depths)}")
+    print(f"Mean Shear Value: {mean_shear_val:.4f} s^-1")
+    print(f"Peak Shear Value: {peak_shear_val:.4f} s^-1")
+    print(f"Peak-to-Mean Shear Ratio: {ratio:.1%}")
+    print(f"Approx. Mean Shear Value: {mean_shear_val0:.4f} s^-1")
+    print(f"Approx. Peak Shear Value: {peak_shear_val0:.4f} s^-1")
+    print(f"Approx. Peak-to-Mean Shear Ratio: {ratio0:.1%}")
+    
+    if ratio > 0.30:
+        print("\nConclusion: The inertial oscillations provide significant transient shear pulses.")
+    else:
+        print("\nNote: Inertial oscillations are present but not the dominant shear source.")
+    
+    f.close()
+
+def inertial_vs_wind_older(romsfile: str, target_depth: float = -20.0):
+    """
+    Computes shear ratios using actual z_rho coordinates.
+    target_depth: depth in meters (e.g., -20.0 for 20m depth)
+
+    Computes the ratio of shear from inertial oscillations to mean wind shear.
+    
+    Logic:
+    1. Define 'Mean Wind Shear': The background shear from the net surface stress.
+    2. Define 'Inertial Shear': The peak transient shear during an inertial cycle.
+    3. Calculate the ratio and print the verification for your discussion.
+    """
+    f = Dataset(romsfile, 'r')
+    
+    # 1. Get z_rho (usually [Time, N, Lat, Lon])
+    # Note: ROMS z_rho is usually negative.
+    z = f.variables['z_rho'][:, :, 7, 6] 
+    u = f.variables['u'][:, :, 7, 6] 
+    v = f.variables['v'][:, :, 7, 6]
+    
+    # 2. Calculate time-averaged vertical grid (z) to find target index
+    # We collapse the time dimension (axis 0) to get a mean profile
+    mean_depth_profile = np.mean(z, axis=0)
+    # Find index where depth is closest to target_depth
+    mld_idx = np.abs(mean_depth_profile - target_depth).argmin()
+
+    actual_depth = mean_depth_profile[mld_idx]
+    
+    # 3. Calculate Shear
+    # Use np.gradient with the actual z-coordinate array for physical accuracy
+    # dz = np.gradient(z, axis=1) # If using non-uniform grids
+    dudz = np.gradient(u, axis=1) / np.abs(np.gradient(z, axis=1))
+    dvdz = np.gradient(v, axis=1) / np.abs(np.gradient(z, axis=1))
+    
+    shear_magnitude = np.sqrt(dudz**2 + dvdz**2)
+    
+    # 4. Use the index determined by coordinate, not hardcoding
+    mean_shear_val = np.mean(np.mean(shear_magnitude[:, mld_idx:], axis=1))
+    peak_shear_val = np.mean(np.max(shear_magnitude[:, mld_idx:], axis=0))
+    
+    ratio = (peak_shear_val - mean_shear_val) / (mean_shear_val + 1e-10)
+    
+    print(f"--- Thesis Check Calculation (Refined) ---")
+    print(f"Target Depth: {target_depth}m (Index: {mld_idx})")
+    print(f"Inertial shear fraction: {ratio:.1%}")
+    if ratio > 0.30:
+        print("\nConclusion: The inertial oscillations provide significant transient shear pulses.")
+    else:
+        print("\nNote: Inertial oscillations are present but not the dominant shear source.")
+
+    f.close()
+
+
 def make_summary():
     """Make summary plots and mixing summary table for each 3 X 3 experiment
     
@@ -2586,19 +3132,66 @@ def make_summary():
     create_3x3_mixing_summary_csv(csv_name="mixing_summary.csv", diurnal=True)
     create_3x3_mixing_summary_csv(csv_name="mixing_summary.csv", diurnal=False)
 
+
+
+
+
+def copy_selected_images_to_thesis_folder(
+    filenames=(
+        'density_hovmuller', 'hodograph', 'conservative_temp',
+        'heat_flux_components', 'mixing_heat_map_diurnal',
+        'mixing_heat_map_stable', 'Ri_hovmuller', 'speed_hovmuller',
+        'stability_hovmuller', 'tke_hovmuller', 'verify_heat_content',
+        'sst_evolution', 'forcing_comparison', 'velocity_hovmuller',
+
+    )
+):    
+    winds = [15, 10, 5]
+    clouds = [0.0, 0.5, 1.0]
+    ext = '.png'
+    thesis_folder = r"C:\Users\Lars Johan\Documents\UIO\master\thesis\figures"
+    thesis_folder = os.path.join(ROOT, 'Plots_thesis')
+    
+    # Ensure the destination folder exists
+    os.makedirs(thesis_folder, exist_ok=True)
+    
+    for wind in winds:
+        for cloud in clouds:
+            cloud_str = f"{cloud:.1f}"
+            # Ensure your lookup dictionary is available here
+            for experiment_no in [DIURNAL_EXPERIMENT_NO, STABLE_EXPERIMENT_NO]:
+                num1 = experiment_no[(cloud_str, wind)]
+                folder1 = os.path.join(RESULT_FOLDER, find_latest_experiment_folder(num1)) 
+
+                for name in filenames:
+                    src_file = os.path.join(folder1, name + ext)
+                    # Adding the experiment number to the filename prevents overwrites
+                    dst_file = os.path.join(thesis_folder, f"{name}_{num1}{ext}")
+                    
+                    if os.path.exists(src_file):
+                        shutil.copy2(src_file, dst_file)
+                        print(f"Copied: {name} from {num1}")
+                    else:
+                        print(f"Warning: File not found {src_file}")
+
+
 if __name__ == "__main__":
     # main(exp_name='_exp57_Ninfo_1_strat_F_swradmax_740_bulk_Uwind_15_cloud_0p5_Qair_80_Tair_20_Pair_1020',
     #      useflux=False, diurnal=True, sw_amplitude=800, cloud=0.5, u_wind=15.0)
 
-    make_summary()
+    #make_summary()
 
     #plots()
-    #compare_ncdiff()
+    #plot_forcing_comparison()
 
-    # extra_plots()
-    # compare_results()
+    compare_ncdiff()
+
+    #extra_plots()
+    #compare_results()
     # plot_kaihc()
 
     # print_forcing_info(os.path.join(RESULT_FOLDER, 
     #                                '2025-03-30T164056_exp6_strat_no_F_cooling_m100_xstress_0p1',
     #                                'roms_frc.nc'))
+
+    #copy_selected_images_to_thesis_folder()

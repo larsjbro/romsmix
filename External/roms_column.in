@@ -254,7 +254,7 @@ ad_VolCons(north) ==  F                            ! northern boundary
         NRST == 144
         NSTA == 1
         NFLT == 1
-       NINFO == 6       ! 0=minimal output, 6=Maximum detail
+       NINFO == 1       ! 0=maximal output, 6=Minimal detail
 
 ! Output history, quicksave, average, and diagnostic files parameters.
 

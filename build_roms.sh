@@ -157,15 +157,15 @@ export     MY_PROJECT_DIR=${PWD}
 # If none of the two options below are activated ROMS will demand an initial 
 # conditions file "roms_ini.nc" in the directory where the model is run.
 #
- export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_STRAT"
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_STRAT"                #LJB
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_STRAT"                    #LJB
+# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_STRAT"                
 #
 
 # Here you choose whether or not rotational effects should be included.
 # If COLUMN_F is activated, ROMS is configured for an f-plane at 60N.
 #
-# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_F"
- export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_F"
+ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_F"
+# export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DCOLUMN_NO_F"
 #
 
 # Here you choose what turbulence scheme to use. 
@@ -191,7 +191,7 @@ export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DEMINUSP"           #LJB
 export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DSOLAR_SOURCE"        #23.09.2025 LJB
 # export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DLONGWAVE_OUT"   # 26.11.2025
 export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DLONGWAVE"         # 26.11.2025
-export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DANA_CLOUD"        # 26.11.2025 # Remove line if "cloud" is part of forcing file
+#export      MY_CPP_FLAGS="${MY_CPP_FLAGS} -DANA_CLOUD"        # 26.11.2025 # Remove line if "cloud" is part of forcing file
  
 #
 

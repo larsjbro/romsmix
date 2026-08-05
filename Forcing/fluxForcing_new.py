@@ -38,15 +38,86 @@ FIG_HEIGTH_HALF = FIG_WIDTH_HALF * 0.618
 FIG_WIDTH_FULL = 2*3.3
 FIG_HEIGTH_FULL = FIG_WIDTH_FULL * 0.618
 
+# (cloud, wind) → experiment number
+DIURNAL_EXPERIMENT_NO = {
+    ("0.0", 5): 30, ("0.0", 10): 28, ("0.0", 15): 32,
+    ("0.5", 5): 46, ("0.5", 10): 50, ("0.5", 15): 57,
+    ("1.0", 5): 49, ("1.0", 10): 53, ("1.0", 15): 54,
+    (0, 5): 30, (0, 10): 28, (0, 15): 32,
+    (50, 5): 46, (50, 10): 50, (50, 15): 57,
+    (100, 5): 49, (100, 10): 53, (100, 15): 54,
+}
+STABLE_EXPERIMENT_NO = {
+    ("0.0", 5): 31, ("0.0", 10): 29, ("0.0", 15): 33,
+    ("0.5", 5): 47, ("0.5", 10): 51, ("0.5", 15): 56,
+    ("1.0", 5): 48, ("1.0", 10): 52, ("1.0", 15): 55,
+    (0, 5): 31, (0, 10): 29, (0, 15): 33,
+    (50, 5): 47, (50, 10): 51, (50, 15): 56,
+    (100, 5): 48, (100, 10): 52, (100, 15): 55,
+}
 
-DIURNAL_EXPERIMENT_NO = {("0.0", 5): 30, ("0.0", 10): 28, ("0.0", 15): 32,
-                            ("0.5", 5): 46, ("0.5", 10): 50, ("0.5", 15): 57,
-                            ("1.0", 5): 49, ("1.0", 10): 53, ("1.0", 15): 54,
-                     }
-STABLE_EXPERIMENT_NO = {("0.0", 5): 31, ("0.0", 10): 29, ("0.0", 15): 33,
-                        ("0.5", 5): 47, ("0.5", 10): 51, ("0.5", 15): 56,
-                        ("1.0", 5): 48, ("1.0", 10): 52, ("1.0", 15): 55,
-                    }
+# For thesis only: 
+# renumber diurnal experiments from 1 to 9
+# renumber non-diurnal experiments from 11 to 19
+NEW_EXPERIMENT_ID_TO_CLOUD_WIND = {
+    1: (0, 5),
+    2: (0, 10),
+    3: (0, 15),
+    4: (50, 5),
+    5: (50, 10),
+    6: (50, 15),
+    7: (100, 5),
+    8: (100, 10),
+    9: (100, 15),
+    11: (0, 5),
+    12: (0, 10),
+    13: (0, 15),
+    14: (50, 5),
+    15: (50, 10),
+    16: (50, 15),
+    17: (100, 5),
+    18: (100, 10),
+    19: (100, 15),    
+
+}
+NEW_EXPERIMENT_ID = { #  old ID -> New ID
+    # diurnal experiments:
+    30: 1, 28: 2, 32: 3, 46: 4, 50: 5, 57: 6, 49: 7, 53: 8, 54: 9,
+    # non-diurnal, steady experiments:
+    31: 11, 29: 12, 33: 13, 47: 14, 51: 15, 56: 16, 48: 17, 52: 18, 55: 19,  
+}
+
+#   New ID -> old ID
+OLD_EXPERIMENT_ID = {new_id: old_id for old_id, new_id in NEW_EXPERIMENT_ID.items()} 
+
+
+def computestats(data, return_state=True):
+    """Return mean, min, max, std and data[0], data[-1]"""
+    d_mean = np.nanmean(data)
+    d_std = np.nanstd(data)
+    d_max = np.nanmax(data)
+    d_min = np.nanmin(data)
+    if not return_state:
+        return {
+            'mean': d_mean,
+            'std': d_std,
+            'min' : d_min,
+            'max': d_max,
+        }
+
+    valid_data = np.flatnonzero(~np.isnan(data))
+    i0 = valid_data[0]
+    i1 = valid_data[-1]
+    startstate = data[i0]
+    endstate = data[i1]
+    return {
+        'mean': d_mean,
+        'std': d_std,
+        'min' : d_min,
+        'max': d_max,
+        'startstate': startstate,
+        'endstate': endstate,
+    }
 
 def mixing_regime_summary(romsfile, tke_threshold=1e-6):
     """
@@ -60,7 +131,6 @@ def mixing_regime_summary(romsfile, tke_threshold=1e-6):
     """
 
     f = Dataset(romsfile, 'r')
-
     # Extract vertical coordinate at rho-points 
     z_rho = f.variables['z_rho'][:,:,7,6]   # (nt, nz)
     z = z_rho[0,:]                          # (nz,)
@@ -101,22 +171,38 @@ def mixing_regime_summary(romsfile, tke_threshold=1e-6):
     convective_fraction = np.nansum(stability == 0) / n_valid
     shear_fraction      = np.nansum(stability == 1) / n_valid
     stable_fraction     = np.nansum(stability == 2) / n_valid
+    unstable_fraction = 1 - stable_fraction
     # Undefined fraction (relative to total)
     undefined_fraction = n_undefined / (n_valid + n_undefined)
 
     # Mixed layer depth (from TKE) 
     # For each time, find deepest depth where TKE > threshold
     #mld_times = compute_mld_tke(f, i=7, j=6, tke_factor=tke_threshold, adaptive=False)
-    mld_times = compute_mld_density(f, i=7, j=6, drho_crit=0.03)
+    mld_times, mld_indices = compute_mld_density(f, i=7, j=6, drho_crit=0.03, return_index=True)
+    mld_stats = computestats(mld_times)
+    sst = get_sst(f)
+    sst_stats = computestats(sst)
 
-    mixed_layer_depth = np.nanmean(mld_times)
+    tke = f.variables['tke'][:,:,7,6]
+    otime = f.variables['ocean_time'][:] / SEC_PER_DAY
+    valid_depths = ~np.isnan(mld_times)
+    for t in np.flatnonzero(valid_depths):
+        idx = int(mld_indices[t])
+        tke[t, :idx] = np.nan
+
+    tke_stats = computestats(tke, return_state=False)
+
 
     f.close()
 
     return {
-        "mixed_layer_depth": mixed_layer_depth,
+        "mixed_layer_depth": mld_stats["mean"],
+        "mld_stats": mld_stats,
+        "sst_stats": sst_stats,
+        "tke_stats": tke_stats,
         "convective_fraction": convective_fraction,
         "shear_fraction": shear_fraction,
+        "unstable_fraction": unstable_fraction,
         "stable_fraction": stable_fraction,
         "undefined_fraction": undefined_fraction,
     }
@@ -256,6 +342,89 @@ def csv_to_latex_table(csv_file,
     return latex
 
 
+def create_summary_tables():
+    """
+    Creates a CSV summary for all 3x3 experiments.
+    Rows: Wind Speeds (5, 10, 15)
+    Cols: Cloud Values (0, 0.5, 1.0)
+    """
+
+    winds = [5, 10, 15]
+    clouds = [0, 50, 100] # in % #[0.0, 0.5, 1.0]  # in fraction
+    num = DIURNAL_EXPERIMENT_NO[(100, 15)]
+    result_folder = os.path.join(RESULT_FOLDER, find_latest_experiment_folder(num))
+    summary = {}
+    for diurnal in [True, False]:
+        experiment_no = DIURNAL_EXPERIMENT_NO if diurnal else STABLE_EXPERIMENT_NO
+        # Loop through 3x3 grid
+        for wind in winds:
+            for cloud in clouds:
+
+                #cloud_str = f"{cloud:.1f}"
+                #num = experiment_no[(cloud_str, wind)]
+                num = experiment_no[(cloud, wind)]
+
+                folder = os.path.join(RESULT_FOLDER, find_latest_experiment_folder(num))
+                romsfile = os.path.join(folder, "roms_his.nc")
+
+                if os.path.exists(romsfile):
+                    summary[(diurnal, cloud, wind)] = mixing_regime_summary(romsfile)
+                else:
+                    print([wind, cloud, "FILE_NOT_FOUND", romsfile])
+    make_mld_table(summary)
+    print()
+    print()
+    make_sst_table(summary)
+    print()
+    print()
+    make_fraction_unstable_table(summary)
+
+
+def make_mld_table(summary):
+    winds = [5, 10, 15]
+    clouds = [0, 50, 100] # in % #[0.0, 0.5, 1.0]  # in fraction
+    print('Cloud cover, Wind, ID, Mean MLD diurnal, ID, Meand MLD avg, Difference')
+    for cloud in clouds:
+        for wind in winds:
+            summary_diurnal = summary[(True, cloud, wind)]
+            summary_nondiurnal = summary[(False, cloud, wind)]
+            id1 = NEW_EXPERIMENT_ID[DIURNAL_EXPERIMENT_NO[(cloud, wind)]]
+            id2 = NEW_EXPERIMENT_ID[STABLE_EXPERIMENT_NO[(cloud, wind)]]
+            mean1 = -summary_diurnal['mld_stats']['mean']
+            mean2 = -summary_nondiurnal['mld_stats']['mean']
+            print(f"{cloud}, {wind}, E{id1:02}, {mean1:5.1f}, E{id2:02}, {mean2:5.1f}, {mean1-mean2:5.1f}"  )
+
+
+def make_sst_table(summary):
+    winds = [5, 10, 15]
+    clouds = [0, 50, 100] # in % #[0.0, 0.5, 1.0]  # in fraction
+    print('Cloud cover, Wind, ID, Mean SST diurnal, ID, Mean SST avg, Difference')
+    for cloud in clouds:
+        for wind in winds:
+            summary_diurnal = summary[(True, cloud, wind)]
+            summary_nondiurnal = summary[(False, cloud, wind)]
+            id1 = NEW_EXPERIMENT_ID[DIURNAL_EXPERIMENT_NO[(cloud, wind)]]
+            id2 = NEW_EXPERIMENT_ID[STABLE_EXPERIMENT_NO[(cloud, wind)]]
+            mean1 = summary_diurnal['sst_stats']['mean']
+            mean2 = summary_nondiurnal['sst_stats']['mean']
+            print(f"{cloud}, {wind}, E{id1:02}, {mean1:5.1f}, E{id2:02}, {mean2:5.1f}, {mean1-mean2:5.1f}"  )
+
+
+def make_fraction_unstable_table(summary):
+    winds = [5, 10, 15]
+    clouds = [0, 50, 100] # in % #[0.0, 0.5, 1.0]  # in fraction
+    print('Cloud cover, Wind, ID, Unstable diurnal, ID, Unstable  avg, Difference')
+    for cloud in clouds:
+        for wind in winds:
+            summary_diurnal = summary[(True, cloud, wind)]
+            summary_nondiurnal = summary[(False, cloud, wind)]
+            id1 = NEW_EXPERIMENT_ID[DIURNAL_EXPERIMENT_NO[(cloud, wind)]]
+            id2 = NEW_EXPERIMENT_ID[STABLE_EXPERIMENT_NO[(cloud, wind)]]
+            mean1 = 100*summary_diurnal['unstable_fraction']
+            mean2 = 100*summary_nondiurnal['unstable_fraction']
+            print(f"{cloud}, {wind}, E{id1:02}, {mean1:5.1f}, E{id2:02}, {mean2:5.1f}, {mean1-mean2:5.1f}"  )
+
+
 def create_3x3_mixing_summary_csv(csv_name="mixing_summary.csv", diurnal=True):
     """
     Creates a CSV summary for all 3x3 experiments.
@@ -272,20 +441,7 @@ def create_3x3_mixing_summary_csv(csv_name="mixing_summary.csv", diurnal=True):
     winds = [5, 10, 15]
     clouds = [0.0, 0.5, 1.0]
 
-    # (cloud, wind) → experiment number
-    diurnal_experiment_no = {
-        ("0.0", 5): 30, ("0.0", 10): 28, ("0.0", 15): 32,
-        ("0.5", 5): 46, ("0.5", 10): 50, ("0.5", 15): 57,
-        ("1.0", 5): 49, ("1.0", 10): 53, ("1.0", 15): 54,
-    }
-
-    stable_experiment_no = {
-        ("0.0", 5): 31, ("0.0", 10): 29, ("0.0", 15): 33,
-        ("0.5", 5): 47, ("0.5", 10): 51, ("0.5", 15): 56,
-        ("1.0", 5): 48, ("1.0", 10): 52, ("1.0", 15): 55,
-    }
-
-    experiment_no = diurnal_experiment_no if diurnal else stable_experiment_no
+    experiment_no = DIURNAL_EXPERIMENT_NO if diurnal else STABLE_EXPERIMENT_NO
 
     num = experiment_no[("1.0", 15)]
     result_folder = os.path.join(RESULT_FOLDER, find_latest_experiment_folder(num))
@@ -556,7 +712,14 @@ def make_bulkforce_file(diurnal=True, sw_amplitude=800.0, cloud=0.0, u_wind=15.0
     
     # Antar at timevec er i DAGER. Faseforskyvning på 0.5 for å ha toppen ved middag (0.5 dager)
     phase_shift = 0.5
-    
+
+    #  Estimate variation in optical thickness of the atmosphere over
+    #  the course of a day under cloudless skies (Zillman, 1972). To
+    #  obtain incoming shortwave radiation multiply by (1.0-0.6*c**3),
+    #  where c is the fractional cloud cover.
+    #
+    #  The equation for saturation vapor pressure is from 
+    #  Gill (Atmosphere-  Ocean Dynamics, pp 606).
     sw_amplitude_clouds = (1.0 - 0.6 * cloud**3) *sw_amplitude
     print(f"sw_amplitude_clouds: {sw_amplitude_clouds}")
     if diurnal:
@@ -734,21 +897,31 @@ def plot_density_difference_hovmuller(file1, file2, filename=None):
     dt = np.array([otime,] * nz).transpose()
 
     # 5. Create the Plot
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
     
     # Use a diverging colormap (RdBu_r) so that 0 (no difference) is white
     # Red indicates file1 is denser; Blue indicates file1 is lighter
     limit = np.max(np.abs(rho_diff))
     #limit = 0.2
     levels = np.linspace(-limit, limit, 51)
-    cf = plt.contourf(dt, z_r, rho_diff, levels=levels, cmap=cm.RdBu_r)
+    # Clip values so anything beyond +/-limit becomes exactly +/-limit
+    rho_plot = np.clip(rho_diff, -limit, limit)
+    cf = plt.contourf(dt, z_r, rho_plot, levels=levels, cmap=cm.RdBu_r)
+
 
     # 6. Formatting
-    plt.colorbar(cf, label=r'Density Difference $\Delta \rho$ [kg/m$^3$]')
+    cbar_obj = plt.colorbar(cf, label=r'$\Delta \rho$ [kg/m$^3$]', extend='both')
+
+    # Manually set ticks
+    #custom_ticks = np.arange(-4, 4.2, 1)
+    #cbar_obj.set_ticks(custom_ticks)
+
     plt.xlabel('Days')
     plt.ylabel('Depth [m]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.grid(axis='x')
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
     #plt.title(f'Density Difference: {os.path.basename(file1)} - {os.path.basename(file2)}')
     
     if filename:
@@ -774,7 +947,7 @@ def plot_Ri_hovmuller(romsfile, filename=None):
 
     # Extract time and convert to days
     otime = f.variables['ocean_time'][:]
-    otime = otime/(24*3600.)
+    otime = otime/SEC_PER_DAY
     ny = np.shape(rho)[1]
     dt = np.array([otime,]*ny).transpose()
 
@@ -848,7 +1021,7 @@ def plot_stability_hovmuller(romsfile, filename=None, reverse_classification=Tru
 
     # Extract time and convert to days
     otime = f.variables['ocean_time'][:]
-    otime = otime/(24*3600.)
+    otime = otime/SEC_PER_DAY
     nt, nz = rho.shape
 
     # Build time-depth mesh (same style as your TKE plot)
@@ -987,7 +1160,7 @@ def plot_tke_hovmuller(romsfile,  filename=None):
 
     # Get time
     otime = f.variables['ocean_time'][:]
-    otime = otime/(24*3600.)
+    otime = otime/SEC_PER_DAY
     ny = np.shape(tke)[1]
     dt = np.array([otime,]*ny).transpose()
 
@@ -995,11 +1168,15 @@ def plot_tke_hovmuller(romsfile,  filename=None):
     plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
 
     # Plot filled contours
-    levels = list(range(-20, 1, 2))
-    plt.contourf(dt,z_w,np.log(tke),levels=levels)
+    lower, upper = (-9, 0)
+    levels = list(range(lower, upper+1, 1))
+
+    log_tke = np.clip(np.log(tke), lower, upper)
+
+    plt.contourf(dt, z_w, log_tke, levels=levels)
 
     # Add info 
-    plt.colorbar(label='log TKE [$m^2/s^2$]')
+    plt.colorbar(label='log TKE [$m^2/s^2$]', extend='both')
     #plt.colorbar(label='TKE difference [$m^2/s^2$]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.ylabel('Depth [m]')
@@ -1042,21 +1219,30 @@ def plot_tke_difference_hovmuller(file1, file2, filename=None):
     tke_diff = np.log(tke1) - np.log(tke2)
 
     # 6. Create the Plot
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
     
     # Diverging colormap: Red = Faster in File 1, Blue = Slower in File 1
     limit = np.max(np.abs(tke_diff))
-    limit = 10
+    limit = 2.0
     levels = np.linspace(-limit, limit, 51)
-    
-    cf = plt.contourf(dt, z_w, tke_diff, levels=levels, cmap=cm.RdBu_r)
+
+    # Clip values so anything beyond ±limit becomes exactly ±limit
+    tke_plot = np.clip(tke_diff, -limit, limit)
+    cf = plt.contourf(dt, z_w, tke_plot, levels=levels, cmap=cm.RdBu_r)
 
     # 7. Formatting
-    plt.colorbar(cf, label=r'TKE Difference $\Delta log TKE$ [$m^2/s^2$]', extend='both') 
+    cbar_obj = plt.colorbar(cf, label=r'$\Delta log TKE$ [$m^2/s^2$]', extend='both') 
+
+    # Manually set ticks
+    custom_ticks = np.arange(-limit, limit+0.2, 1)
+    cbar_obj.set_ticks(custom_ticks)
+
     plt.xlabel('Days')
     plt.ylabel('Depth [m]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.grid(axis='x')
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
     
     if filename:
         plt.savefig(filename, dpi=300, bbox_inches='tight')
@@ -1273,28 +1459,38 @@ def plot_speed_difference_hovmuller(file1, file2, filename=None):
     speed2 = np.sqrt(u2**2 + v2**2)
     
     # 4. Calculate the difference
-    speed_diff = speed1 - speed2
+    speed_diff = (speed1 - speed2) * 100  # cm/s
 
     # 5. Prepare grid for plotting
     nt, nz = np.shape(speed_diff)
     dt = np.array([otime,] * nz).transpose()
 
     # 6. Create the Plot
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
     
     # Diverging colormap: Red = Faster in File 1, Blue = Slower in File 1
-    limit = np.max(np.abs(speed_diff))
+    limit = int(np.max(np.abs(speed_diff))) 
+    if limit == 0:
+        limit = limit + 1 
     #limit = 0.03
     levels = np.linspace(-limit, limit, 51)
-    
-    cf = plt.contourf(dt, z_r, speed_diff, levels=levels, cmap=cm.RdBu_r)
+    # Clip values so anything beyond ±limit becomes exactly ±limit
+    speed_plot = np.clip(speed_diff, -limit, limit)
+    cf = plt.contourf(dt, z_r, speed_plot, levels=levels, cmap=cm.RdBu_r)
 
     # 7. Formatting
-    plt.colorbar(cf, label=r'Speed Difference $\Delta |U|$ [m/s]')
+    cbar_obj = plt.colorbar(cf, label=r'$\Delta |U|$ [cm/s]', extend='both')
+  
+    # Manually set ticks
+    # custom_ticks = np.arange(-4, 4.2, 1)
+    # cbar_obj.set_ticks(custom_ticks)
+    
     plt.xlabel('Days')
     plt.ylabel('Depth [m]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.grid(axis='x')
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
     #plt.title(f'Speed Difference: {os.path.basename(file1)} - {os.path.basename(file2)}')
     
     if filename:
@@ -1321,7 +1517,7 @@ def plot_speed_hovmuller(romsfile, filename=None):
 
     # Get time
     otime = f.variables['ocean_time'][:]
-    otime = otime/(24*3600.)
+    otime = otime/SEC_PER_DAY
     # dt = np.array([otime,]*42).transpose()  # LJB
     n = np.shape(speed)[1]
     dt = np.array([otime,]*n).transpose()  # LJB
@@ -2333,22 +2529,25 @@ def plot_cons_temp_difference_hovmuller(file1, file2, filename=None):
     dt = np.array([otime,] * nz).transpose()
 
     # 6. Create the Plot
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
     
     limit = np.max(np.abs(ct_diff))
     limit = max(limit, 0.01) # Avoid range errors if files are identical
     levels = np.linspace(-limit, limit, 51)
     
+    ct_plot = np.clip(ct_diff, -limit, limit)
     cf = plt.contourf(dt, z_r, ct_diff, levels=levels, cmap=cm.RdBu_r)
 
     # 7. Formatting
     cbar = plt.colorbar(cf)
-    cbar.set_label(r'Conservative Temp Difference $\Delta \Theta$ [$^\circ$C]')
+    cbar.set_label(r'$\Delta \Theta$ [$^\circ$C]')
     
     plt.xlabel('Days')
     plt.ylabel('Depth [m]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.grid(axis='x')
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
     #plt.title(f'Conservative Temp Diff: {os.path.basename(file1)} vs {os.path.basename(file2)}')
     
     if filename:
@@ -2432,7 +2631,7 @@ def plot_conservative_temp(romsfile, filename=None):
     f.close()
 
 def get_sst(f):
-    """Return SST and time"""
+    """Return SST as function of time"""
 
     # Extracting temperature at the surface (index -1) for coordinates 7, 6
     # temp variable is typically [time, s_rho, eta_rho, xi_rho]
@@ -2612,8 +2811,17 @@ def plots():
     #experiments = (1, 9)
     experiments = list(range(28, 34)) + list(range(46, 58))
     folders = [find_latest_experiment_folder(i) for i in experiments]
-    for folder in folders:
+    for experiment in experiments:
+    #for folder in folders:
+        
+        new_experiment = NEW_EXPERIMENT_ID[experiment]
+        new_experiment_no = f"E{new_experiment:02}"
+        cloud_cover, wind = NEW_EXPERIMENT_ID_TO_CLOUD_WIND[new_experiment]
+        folder = find_latest_experiment_folder(experiment) 
         if True: #folder.startswith('2025-09-24'):# 
+            print("")
+            print("Exp ID: ", new_experiment_no)
+            print(f'Cloud cover: {cloud_cover}, Wind: {wind}')
             print(folder)
             root = os.path.join(RESULT_FOLDER, folder)
             romsfile = os.path.join(root, 'roms_his.nc')
@@ -2637,7 +2845,10 @@ def plots():
             # plot_velocity_hovmuller(romsfile, filename=os.path.join(root, 'velocity_hovmuller' +ext))
             # plot_absolute_salinity(romsfile, filename=os.path.join(root, 'absolute_salinity' +ext))
             plot_tke_hovmuller(romsfile, filename=os.path.join(root, 'tke_hovmuller' +ext))
+            #compute_mixed_layer_shear_stats(romsfile, smooth_shear=True, verbose=True)
             #inertial_vs_wind(romsfile) #shear enhancement factor, coefficient of variation
+
+
 
 
             # plot_heat_flux_components(romsfile, filename=os.path.join(root, 'heat_flux_components' +ext))
@@ -2821,6 +3032,7 @@ def compare_ncdiff():
         (54, 55), # døgnsyklus vs ikke, vind 15 m/s, cloud 1.0
 
         (28 , 30), #10m/s - 5m/s
+        (30, 28),  #5m/s - 10m/s
 
 
         # compare increasing cloud and wind
@@ -2843,9 +3055,9 @@ def compare_ncdiff():
         #forcing_file = os.path.join(folder, 'roms_frc.nc')
         romsfile1 = os.path.join(folder1, 'roms_his.nc')
         romsfile2 = os.path.join(folder2, 'roms_his.nc')
-        #plot_density_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'density_hovmuller_{difftxt}' +ext))
-        #plot_speed_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'speed_hovmuller_{difftxt}' +ext))
-        #plot_cons_temp_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'conservative_temp_{difftxt}' +ext))
+        # plot_density_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'density_hovmuller_{difftxt}' +ext))
+        # plot_speed_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'speed_hovmuller_{difftxt}' +ext))
+        # plot_cons_temp_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'conservative_temp_{difftxt}' +ext))
         plot_tke_difference_hovmuller(romsfile1, romsfile2, filename=os.path.join(folder2, f'tke_hovmuller_{difftxt}' +ext))
         # plot_density_hovmuller(romsfile,
         #                     maxdensity=0.0,
@@ -2919,6 +3131,130 @@ def create_3x3_experiment_grid(plot_name="temp_hovmuller.png", diurnal=True):
     print(f"Matrix saved to {filename}")
 
 
+def compute_mixed_layer_shear_stats(
+    romsfile: str,
+    drho_crit: float = 0.03,
+    smooth_shear: bool = False,
+    verbose=True,
+):
+    """
+    Compute mixed-layer shear statistics following Brannigan (2013).
+
+    Definitions used:
+    -----------------
+    • Mixed Layer Depth (MLD):
+        Determined from density using a Δρ criterion.
+
+    • Mixed-Layer Shear:
+        Shear values ABOVE the MLD (from the MLD depth to the surface).
+
+    • Peak Shear:
+        Shear evaluated AT the MLD depth (Brannigan 2013).
+
+    • Mean Shear:
+        Average shear over the mixed layer (MLD → surface).
+
+    • CV² (Coefficient of Variation Squared):
+        CV² = variance / mean², computed over mixed-layer shear.
+
+    • Peak-to-Mean Ratio:
+        peak_shear / mean_shear   (reported as a percentage).
+
+    Optional:
+    ---------
+    • smooth_shear=True applies a vertical smoothing filter to reduce
+      gradient noise in ROMS shear fields.
+
+    Returns:
+    --------
+    A dictionary containing:
+        mean_mld
+        mean_shear
+        peak_shear
+        cv2
+        peak_to_mean_ratio
+    """
+
+    f = Dataset(romsfile, 'r')
+
+    # ---------------------------------------------------------------
+    # 1. Compute dynamic MLD (depth + index)
+    # ---------------------------------------------------------------
+    mld_depths, mld_indices = compute_mld_density(
+        f, drho_crit=drho_crit, return_index=True
+    )
+    valid_times = np.flatnonzero(~np.isnan(mld_depths))
+
+    # Extract vertical coordinate and velocity components
+    z_r = f.variables["z_rho"][:, :, 7, 6]   # shape (nt, nz)
+    u   = f.variables["u"][:, :, 7, 6]
+    v   = f.variables["v"][:, :, 7, 6]
+
+    nt, nz = z_r.shape
+
+    # ---------------------------------------------------------------
+    # 2. Compute vertical shear magnitude
+    # ---------------------------------------------------------------
+    dz   = np.abs(np.gradient(z_r, axis=1))
+    dudz = np.gradient(u, axis=1) / (dz + 1e-10)
+    dvdz = np.gradient(v, axis=1) / (dz + 1e-10)
+    shear_mag = np.sqrt(dudz**2 + dvdz**2)
+
+    # Optional smoothing to reduce gradient noise
+    if smooth_shear:
+        from scipy.ndimage import uniform_filter1d
+        shear_mag = uniform_filter1d(shear_mag, size=3, axis=1)
+
+    # ---------------------------------------------------------------
+    # 3. Mixed-layer shear mask (MLD → surface)
+    # ---------------------------------------------------------------
+    mld_shear = np.full_like(shear_mag, np.nan)
+    for t in valid_times:
+        idx = int(mld_indices[t])
+        # Shear ABOVE the MLD (MLD depth → surface)
+        mld_shear[t, idx:] = shear_mag[t, idx:]
+
+    # ---------------------------------------------------------------
+    # 4. Mixed-layer mean shear and CV²
+    # ---------------------------------------------------------------
+    mean_shear_val = np.nanmean(mld_shear)
+
+    # CV² = variance / mean² (computed per time, then averaged)
+    mean_z_local_shear = np.nanmean(mld_shear, axis=1)
+    variance_z_local_shear = np.nanvar(mld_shear, axis=1)
+    cv2 = np.nanmean(variance_z_local_shear / (mean_z_local_shear**2 + 1e-10))
+
+    # ---------------------------------------------------------------
+    # 5. Peak shear at the MLD depth (Brannigan 2013)
+    # ---------------------------------------------------------------
+    peak_shear_val = np.nanmean([
+        shear_mag[t, int(mld_indices[t])] for t in valid_times
+    ])
+
+    # ---------------------------------------------------------------
+    # 6. Peak-to-Mean Ratio (percentage)
+    # ---------------------------------------------------------------
+    peak_to_mean_ratio = (peak_shear_val / (mean_shear_val + 1e-10)) * 100.0
+
+    # ---------------------------------------------------------------
+    # 7. Return results (no printing)
+    # ---------------------------------------------------------------
+    mean_mld = np.nanmean(mld_depths)
+    if verbose:
+        print(f"Mean MLD: {mean_mld:.1f}")
+        #print(f"Mean Shear Value: {mean_shear_val:.4f} s^-1")
+        #print(f"Peak Shear Value: {peak_shear_val:.4f} s^-1")
+        print(f"CV^2: {cv2:.2f}")
+        print(f"Peak-to-Mean Shear Ratio: {peak_to_mean_ratio:.1f}")
+    return {
+        "mean_mld": float(mean_mld),
+        "mean_shear": float(mean_shear_val),
+        "peak_shear": float(peak_shear_val),
+        "cv2": float(cv2),
+        "peak_to_mean_ratio": float(peak_to_mean_ratio)
+    }
+
+
 def inertial_vs_wind(romsfile: str, drho_crit: float = 0.03):
     """
     Computes shear statistics using a dynamic MLD.
@@ -2926,11 +3262,11 @@ def inertial_vs_wind(romsfile: str, drho_crit: float = 0.03):
     """
     f = Dataset(romsfile, 'r')
     
-    # 1. Get MLD
+    # 1. Compute dynamic MLD (depth + index)
     mld_depths, mld_indices = compute_mld_density(f, drho_crit=drho_crit, return_index=True)
     
     # Check for NaNs in MLD depths
-    valid_depths = ~np.isnan(mld_depths)
+    valid_times = np.flatnonzero(~np.isnan(mld_depths))
     
     z_r = f.variables["z_rho"][:, :, 7, 6]
     nt, nz = z_r.shape
@@ -2944,29 +3280,37 @@ def inertial_vs_wind(romsfile: str, drho_crit: float = 0.03):
     shear_mag = np.sqrt(dudz**2 + dvdz**2)
     
     # 3. Create Masked Array for Mixed Layer
-    ml_shear = np.full_like(shear_mag, np.nan)
-    for t in np.flatnonzero(valid_depths):
+    mld_shear = np.full_like(shear_mag, np.nan)
+    for t in valid_times:
         # Use mld_indices directly as it is an integer array
+        # Shear values ABOVE the MLD (from the MLD depth to the surface)
         idx = int(mld_indices[t])
-        ml_shear[t, idx:] = shear_mag[t, idx:]
+        mld_shear[t, idx:] = shear_mag[t, idx:]
 
     # 4. Statistics (Vectorized)
-    mean_ts = np.nanmean(ml_shear, axis=1)
-    var_ts = np.nanvar(ml_shear, axis=1)
-    intermittency_factors = var_ts / (mean_ts**2 + 1e-10)
-    
-    mean_enhancement = np.nanmean(intermittency_factors)
+    mean_z_local_shear = np.nanmean(mld_shear, axis=1)
+    variance_z_local_shear = np.nanvar(mld_shear, axis=1)
+    intermittency_factors = variance_z_local_shear / (mean_z_local_shear**2 + 1e-10)
+
+    # coeffiecient_of_variation_squared:
+    cv2 = np.nanmean(intermittency_factors)
     
     # 5. Peak-to-Mean Ratio
-    mean_shear_val = np.nanmean(ml_shear)
-    peak_shear_val = np.nanmean(np.nanmax(ml_shear, axis=1))
-    ratio = (peak_shear_val - mean_shear_val) / (mean_shear_val + 1e-10)
+    # Mean shear inside the mixed layer
+    mean_shear_val = np.nanmean(mld_shear)
+    # Peak shear AT the MLD depth (Brannigan 2013)
+    peak_shear_val = np.nanmean([
+        shear_mag[t, int(mld_indices[t])] for t in valid_times
+    ])
+    # peak_shear_val = np.nanmean(np.nanmax(mld_shear, axis=1))
+    #ratio = (peak_shear_val - mean_shear_val) / (mean_shear_val + 1e-10)
+    ratio = peak_shear_val / (mean_shear_val + 1e-10)
     
     print(f"--- Thesis Check: Intermittency Analysis ---")
     print(f"Mean MLD: {np.nanmean(mld_depths)}")
     print(f"Mean Shear Value: {mean_shear_val:.4f} s^-1")
     print(f"Peak Shear Value: {peak_shear_val:.4f} s^-1")
-    print(f"Shear Enhancement Factor: {mean_enhancement:.2f}")
+    print(f"CV^2: {cv2:.2f}")
     print(f"Peak-to-Mean Shear Ratio: {ratio:.1%}")
     
 
@@ -3145,9 +3489,15 @@ def copy_selected_images_to_thesis_folder(
         'sst_evolution', 'forcing_comparison', 'velocity_hovmuller',
 
     )
-):    
+):   
+    extra_files= {
+        'tke_hovmuller_diff', 
+        'speed_hovmuller_diff', 
+        'density_hovmuller_diff',
+        'conservative_temp_diff',
+    }
     winds = [15, 10, 5]
-    clouds = [0.0, 0.5, 1.0]
+    cloud_covers = [0, 50, 100]
     ext = '.png'
     thesis_folder = r"C:\Users\Lars Johan\Documents\UIO\master\thesis\figures"
     thesis_folder = os.path.join(ROOT, 'Plots_thesis')
@@ -3156,32 +3506,52 @@ def copy_selected_images_to_thesis_folder(
     os.makedirs(thesis_folder, exist_ok=True)
     
     for wind in winds:
-        for cloud in clouds:
-            cloud_str = f"{cloud:.1f}"
+        for cloud_cover in cloud_covers:
+            
             # Ensure your lookup dictionary is available here
             for experiment_no in [DIURNAL_EXPERIMENT_NO, STABLE_EXPERIMENT_NO]:
-                num1 = experiment_no[(cloud_str, wind)]
+                num1 = experiment_no[(cloud_cover, wind)]
                 folder1 = os.path.join(RESULT_FOLDER, find_latest_experiment_folder(num1)) 
-
+                new_id = NEW_EXPERIMENT_ID[num1]
+                
                 for name in filenames:
                     src_file = os.path.join(folder1, name + ext)
                     # Adding the experiment number to the filename prevents overwrites
-                    dst_file = os.path.join(thesis_folder, f"{name}_{num1}{ext}")
+                    dst_file = os.path.join(thesis_folder, f"{name}_E{new_id:02}{ext}")
                     
                     if os.path.exists(src_file):
                         shutil.copy2(src_file, dst_file)
-                        print(f"Copied: {name} from {num1}")
+                        print(f"Copied: {name} from {num1} -> E{new_id:02}")
                     else:
                         print(f"Warning: File not found {src_file}")
-
+                for name in extra_files:
+                    files = glob.glob(os.path.join(folder1, name + '*'))
+                    for src_file in files:
+                        filename = os.path.basename(src_file)
+                        base, _ext = os.path.splitext(filename)
+                        _, nums = base.split(name)
+                        id1, id2 = nums.split("-")
+                        try:
+                            id1 = int(id1)
+                            id2 = int(id2)
+                            new_id1 =  NEW_EXPERIMENT_ID[id1]
+                            new_id2 =  NEW_EXPERIMENT_ID[id2]
+                        except (TypeError, IndexError) as exc:
+                            print(f"Warning: File not on correct form {filename}")
+                            continue
+                        dst_file = os.path.join(thesis_folder, f"{name}_E{new_id1:02}-E{new_id2:02}{ext}")
+                        shutil.copy2(src_file, dst_file)
+                        print(f"Copied: {filename} from ({id1}, {id2}) -> E{new_id1:02}, E{new_id2:02}")
+                        
 
 if __name__ == "__main__":
     # main(exp_name='_exp57_Ninfo_1_strat_F_swradmax_740_bulk_Uwind_15_cloud_0p5_Qair_80_Tair_20_Pair_1020',
     #      useflux=False, diurnal=True, sw_amplitude=800, cloud=0.5, u_wind=15.0)
 
-    #make_summary()
+    # make_summary()
+    #create_summary_tables()
 
-    #plots()
+    plots()
     #plot_forcing_comparison()
 
     compare_ncdiff()
@@ -3194,4 +3564,4 @@ if __name__ == "__main__":
     #                                '2025-03-30T164056_exp6_strat_no_F_cooling_m100_xstress_0p1',
     #                                'roms_frc.nc'))
 
-    #copy_selected_images_to_thesis_folder()
+    copy_selected_images_to_thesis_folder()

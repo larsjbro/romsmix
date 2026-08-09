@@ -3583,18 +3583,24 @@ def plot_mld_sst_comparison(
     # 1. SST Comparison (The Thermodynamic Response)
     ax1.plot(time1, sst1, color="tab:red", label="Diurnal")
     ax1.plot(time2, sst2, color="tab:blue", linestyle="--", label="Average")
+    # ax1.legend(fontsize=7)
     ax1.set_ylabel("SST [°C]")
-    ax1.legend(fontsize=7)
+    ax1.set_ylim([18.5, 21.5])
 
     ax1.set_xticks(np.arange(0, 8, 1))
     ax1.set_xticklabels([str(i) for i in range(0, 8)])
+    # Highlight the "Timing" difference
+    ax1.grid(True, linestyle="--", alpha=0.5)
 
     # 2. MLD Evolution (The Result)
     # Assuming MLD is computed from potential density sigma_theta
-    ax2.plot(time1, mld1, color="tab:red")
-    ax2.plot(time1, mld2, color="tab:blue", linestyle="--")
+    ax2.plot(time1, mld1, color="tab:red", label="Diurnal")
+    ax2.plot(time1, mld2, color="tab:blue", linestyle="--", label="Average")
+    ax2.legend(fontsize=7)
     ax2.set_ylabel("MLD [m]")
     ax2.set_xlabel("Days")
+    ax2.set_ylim([-55, 0])
+    ax2.set_yticks(np.arange(-50, 1, 25))
     ax2.set_xticks(np.arange(0, 8, 1))
     ax2.set_xticklabels([str(i) for i in range(0, 8)])
 
@@ -4107,9 +4113,9 @@ def copy_selected_images_to_thesis_folder(
 
 
 if __name__ == "__main__":
-    import matplotlib
+    # import matplotlib
+    # matplotlib.interactive(True)
 
-    matplotlib.interactive(True)
     # main(
     #     exp_name=(
     #         '_exp59_Ninfo_1_strat_F_swrad_252_bulk_Uwind_10_'
@@ -4127,9 +4133,9 @@ if __name__ == "__main__":
     # create_summary_tables()
 
     # plots()
-    # plot_forcing_comparison()
+    plot_forcing_comparison()
 
-    compare_ncdiff()
+    # compare_ncdiff()
 
     # extra_plots()
     # compare_results()

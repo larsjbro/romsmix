@@ -2568,7 +2568,8 @@ def verify_heat_content(his_file: str, filename: str = ""):
 
 def run_ncdiff(folder1, folder2):
     """
-    Used ncdiff to calculate the difference between two netcdf-files and stores the result in folder2.
+    Used ncdiff to calculate the difference between two netcdf-files
+    and stores the result in folder2.
     """
     exp_num1 = extract_experiment_number(folder1)
     exp_num2 = extract_experiment_number(folder2)
@@ -2576,15 +2577,17 @@ def run_ncdiff(folder1, folder2):
     his_file2 = os.path.join(folder2, "roms_his.nc")
     his_fileout = os.path.join(folder2, f"roms_his_diff{exp_num1}-{exp_num2}.nc")
     txt = subprocess.run(
-        ["ncdiff", his_file1, his_file2, his_fileout], capture_output=True, text=True
+        ["ncdiff", his_file1, his_file2, his_fileout],
+        capture_output=True,
+        text=True
     ).stdout
     print(f"Finished generating ncdiff file {his_fileout}: ", txt)
 
 
 def compare_heat_content(folders: list[str], filename: str = ""):
     """
-    Calculates the total heat content in a ROMS simulation and compares it
-    with the cumulative heat flux input from a forcing file.
+    Calculates the total heat content in a ROMS simulation and compares
+    it with the cumulative heat flux input from a forcing file.
     """
 
     try:
@@ -2603,10 +2606,13 @@ def compare_heat_content(folders: list[str], filename: str = ""):
             )
 
             # 2. Calculate Forcing Side
-            forcing_flux, cum_forcing = calculate_forcing_heat_stats_2D_interior(ds_his)
+            forcing_flux, cum_forcing = (
+                calculate_forcing_heat_stats_2D_interior(ds_his)
+            )
 
             model_heat_change.plot(
-                ax=axes[0], label=f"Model Heat Change exp.nr={exp_num}", marker="o"
+                ax=axes[0],
+                label=f"Model Heat Change exp.nr={exp_num}", marker="o"
             )
             cum_forcing.plot(
                 ax=axes[0],
@@ -2615,7 +2621,8 @@ def compare_heat_content(folders: list[str], filename: str = ""):
                 linestyle="--",
             )
             model_heat_rate.plot(
-                ax=axes[1], label=f"Model Heat Rate (W) exp.nr={exp_num}", marker="o"
+                ax=axes[1],
+                label=f"Model Heat Rate (W) exp.nr={exp_num}", marker="o"
             )
             forcing_flux.plot(
                 ax=axes[1],

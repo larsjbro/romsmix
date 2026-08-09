@@ -185,6 +185,35 @@ def computestats(data, return_state=True):
 # -------------------------------------------------------------
 # Physics Utilities
 # -------------------------------------------------------------
+def get_inertial_period_hours(lat_deg: float) -> float:
+    """
+    Compute the theoretical inertial period (in hours) at a given latitude.
+
+    Parameters
+    ----------
+    lat_deg : float
+        Latitude in degrees. Positive for the Northern Hemisphere.
+
+    Returns
+    -------
+    float
+        Inertial period in hours.
+
+    Notes
+    -----
+    The inertial frequency is:
+        f = 2 * Omega * sin(lat)
+    where Omega = 7.2921e-5 rad/s is Earth's rotation rate.
+
+    Example
+    -------
+    At 60°N, the inertial period is approximately 13.8 hours.
+    """
+    omega = 7.2921e-5  # Earth's rotation rate [rad/s]
+    f_coriolis = 2 * omega * np.sin(np.deg2rad(lat_deg))
+    return (2 * np.pi / f_coriolis) / 3600.0
+
+
 def gradient_richardson_number(rho, u, v, z, g=9.81, rho0=1025):
     """
     Compute gradient Richardson number.
@@ -1452,7 +1481,7 @@ def plot_tke_difference_hovmuller(file1, file2, filename=None):
 
     # 7. Formatting
     cbar_obj = plt.colorbar(
-        cf, label=r"$\Delta log TKE$ [$m^2/s^2$]", extend="both"
+        cf, label=r"$\Delta log TKE$", extend="both"
     )
 
     # Manually set ticks
@@ -1760,33 +1789,40 @@ def plot_velocity_hovmuller(
 
     # Extract ocean_time and depth
     # ROMS vertical grids can be complex; assuming sigma layers
-    otime = f.variables["ocean_time"][:] / (24 * 3600.0)
-    u = f.variables["u"][:, :, 7, 6]  # Example index for spatial location
-    v = f.variables["v"][:, :, 7, 6]
+    otime = f.variables["ocean_time"][:] / SEC_PER_DAY
+    u = f.variables["u"][:, :, 7, 6] * 100
+    v = f.variables["v"][:, :, 7, 6] * 100
 
     # Define vertical levels (simplified)
     # z = np.arange(u.shape[1])
     z = f.variables["z_rho"][0, :, 7, 6]
 
+
     # Theoretical Inertial Period calculation for 60 degrees North
-    # f = 2 * Omega * sin(lat)
-    lat = 60
-    omega = 7.2921e-5  # Earth's rotation rate in rad/s
-    f_coriolis = 2 * omega * np.sin(np.deg2rad(lat))
-    inertial_period_hours = (2 * np.pi / f_coriolis) / 3600.0  # ~13.8 hours
+    # ~13.8 hours
+    inertial_period_hours = get_inertial_period_hours(lat_deg=60)
     inertial_period_days = inertial_period_hours / 24.0
 
     fig, (ax1, ax2) = plt.subplots(
         2, 1, figsize=(FIG_WIDTH_FULL, FIG_HEIGTH_FULL), sharex=True
     )
     velmax = np.round(max(np.max(np.abs(u)), np.max(np.abs(v))), decimals=1)
+    velmax = 30  # cm/s
+    plot_u = np.clip(u, -velmax, velmax)
+    plot_v = np.clip(v, -velmax, velmax)
     # Use a diverging colormap (e.g., RdBu_r) for velocity
     mesh1 = ax1.pcolormesh(
-        otime, z, u.T, cmap="RdBu_r", shading="auto", vmin=-velmax, vmax=velmax
+        otime, z, plot_u.T, cmap="RdBu_r",
+        shading="auto", vmin=-velmax, vmax=velmax
     )
     ax1.set_ylabel("Depth [m]", fontsize=10)
-    ax1.set_title("U-Velocity Component", fontsize=12)
-    fig.colorbar(mesh1, ax=ax1, label="m/s")
+    ax1.set_title("u-Velocity Component", fontsize=12)
+    cbar_obj = fig.colorbar(mesh1, ax=ax1, label="cm/s")
+    custom_ticks = [-20, -10, 0, 10, 20]
+    cbar_obj.set_ticks(custom_ticks)
+    # Optional: Set labels if you want to name them differently
+    # cbar_obj.set_ticklabels(['-1', '0', '0.25', '1', '4'])
+
     ax1.set_ylim([PLOT_DEPTH_MAX, 0])
     ax1.grid(axis="x")
     ax1.set_xticks(np.arange(0, 8, 1))
@@ -1794,12 +1830,16 @@ def plot_velocity_hovmuller(
     ax1.set_xlim(-0.5, 7.5)  # Adjustin
 
     mesh2 = ax2.pcolormesh(
-        otime, z, v.T, cmap="RdBu_r", shading="auto", vmin=-velmax, vmax=velmax
+        otime, z, plot_v.T, cmap="RdBu_r",
+        shading="auto", vmin=-velmax, vmax=velmax
     )
     ax2.set_ylabel("Depth [m]", fontsize=10)
     ax2.set_xlabel("Days", fontsize=10)
-    ax2.set_title("V-Velocity Component", fontsize=12)
-    fig.colorbar(mesh2, ax=ax2, label="m/s")
+    ax2.set_title("v-Velocity Component", fontsize=12)
+    cbar_obj = fig.colorbar(mesh2, ax=ax2, label="cm/s")
+    cbar_obj.set_ticks(custom_ticks)
+    # Optional: Set labels if you want to name them differently
+    # cbar_obj.set_ticklabels(['-1', '0', '0.25', '1', '4'])
     ax2.set_ylim([PLOT_DEPTH_MAX, 0])
     ax2.grid(axis="x")
     ax2.set_xticks(np.arange(0, 8, 1))
@@ -2951,16 +2991,16 @@ def plot_temp_difference_hovmuller(file1, file2, filename=None):
 
     # 6. Formatting
     cbar = plt.colorbar(cf)
-    cbar.set_label(r"Temperature Difference $\Delta T$ [$^\circ$C]")
+    cbar.set_label(r"$\Delta T$ [$^\circ$C]")
 
     plt.xlabel("Days")
     plt.ylabel("Depth [m]")
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.grid(axis="x")
-    plt.title(
-        "Temperature Difference: "
-        f"{os.path.basename(file1)} - {os.path.basename(file2)}"
-    )
+    # plt.title(
+    #     "Temperature Difference: "
+    #     f"{os.path.basename(file1)} - {os.path.basename(file2)}"
+    # )
 
     if filename:
         plt.savefig(filename, dpi=300, bbox_inches="tight")
@@ -3371,30 +3411,30 @@ def plots():
 
         out = make_out(root, ext=".png")
 
-        plot_Ri_hovmuller(romsfile, out("Ri_hovmuller"))
-        plot_stability_hovmuller(romsfile, out("stability_hovmuller"))
-        plot_tke_stability_hovmuller(romsfile, out("tke_stability_hovmuller"))
+        # plot_Ri_hovmuller(romsfile, out("Ri_hovmuller"))
+        # plot_stability_hovmuller(romsfile, out("stability_hovmuller"))
+        # plot_tke_stability_hovmuller(romsfile, out("tke_stability_hovmuller"))
 
-        plot_hodograph([romsfile], savefile=True)
+        # plot_hodograph([romsfile], savefile=True)
 
-        verify_heat_content(romsfile, out("verify_heat_content"))
-        # plot_heat_flux_evolution=verify_heat_content
-        plot_heat_flux_evolution(romsfile, out("heat_flux_evolution"))
+        # verify_heat_content(romsfile, out("verify_heat_content"))
+        # # plot_heat_flux_evolution=verify_heat_content
+        # plot_heat_flux_evolution(romsfile, out("heat_flux_evolution"))
 
-        plot_conservative_temp(romsfile, out("conservative_temp"))
-        plot_sst_evolution(romsfile, out("sst_evolution"))
+        # plot_conservative_temp(romsfile, out("conservative_temp"))
+        # plot_sst_evolution(romsfile, out("sst_evolution"))
 
-        plot_density_hovmuller(romsfile, out("density_hovmuller"))
-        plot_density_hovmuller(romsfile, out("density_hovmuller_mld"), MLD=True)
-        plot_speed_hovmuller(romsfile, out("speed_hovmuller"))
+        # plot_density_hovmuller(romsfile, out("density_hovmuller"))
+        # plot_density_hovmuller(romsfile, out("density_hovmuller_mld"), MLD=True)
+        # plot_speed_hovmuller(romsfile, out("speed_hovmuller"))
         plot_velocity_hovmuller(romsfile, out("velocity_hovmuller"))
-        plot_absolute_salinity(romsfile, out("absolute_salinity"))
-        plot_tke_hovmuller(romsfile, out("tke_hovmuller"))
-        compute_mixed_layer_shear_stats(
-            romsfile, smooth_shear=False, verbose=True
-        )
+        # plot_absolute_salinity(romsfile, out("absolute_salinity"))
+        # plot_tke_hovmuller(romsfile, out("tke_hovmuller"))
+        # compute_mixed_layer_shear_stats(
+        #     romsfile, smooth_shear=False, verbose=True
+        # )
 
-        plot_heat_flux_components(romsfile, out("heat_flux_components"))
+        # plot_heat_flux_components(romsfile, out("heat_flux_components"))
 
         # plot_thermodynamic_fluxes(
         #     romsfile,
@@ -3618,21 +3658,21 @@ def compare_ncdiff():
         # forcing_file = os.path.join(folder, 'roms_frc.nc')
         romsfile1 = os.path.join(folder1, "roms_his.nc")
         romsfile2 = os.path.join(folder2, "roms_his.nc")
-        plot_density_difference_hovmuller(
-            romsfile1,
-            romsfile2,
-            filename=out2(f"density_hovmuller_{difftxt}"),
-        )
-        plot_speed_difference_hovmuller(
-            romsfile1,
-            romsfile2,
-            filename=out2(f"speed_hovmuller_{difftxt}"),
-        )
-        plot_cons_temp_difference_hovmuller(
-            romsfile1,
-            romsfile2,
-            filename=out2(f"conservative_temp_{difftxt}"),
-        )
+        # plot_density_difference_hovmuller(
+        #     romsfile1,
+        #     romsfile2,
+        #     filename=out2(f"density_hovmuller_{difftxt}"),
+        # )
+        # plot_speed_difference_hovmuller(
+        #     romsfile1,
+        #     romsfile2,
+        #     filename=out2(f"speed_hovmuller_{difftxt}"),
+        # )
+        # plot_cons_temp_difference_hovmuller(
+        #     romsfile1,
+        #     romsfile2,
+        #     filename=out2(f"conservative_temp_{difftxt}"),
+        # )
         plot_tke_difference_hovmuller(
             romsfile1,
             romsfile2,
@@ -4086,10 +4126,10 @@ if __name__ == "__main__":
     # make_summary()
     # create_summary_tables()
 
-    plots()
+    # plots()
     # plot_forcing_comparison()
 
-    # compare_ncdiff()
+    compare_ncdiff()
 
     # extra_plots()
     # compare_results()
@@ -4103,4 +4143,4 @@ if __name__ == "__main__":
     #     )
     # )
 
-    # copy_selected_images_to_thesis_folder()
+    copy_selected_images_to_thesis_folder()

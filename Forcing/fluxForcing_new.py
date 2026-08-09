@@ -1,24 +1,23 @@
-import os
-import re
 import csv
 import glob
+import os
+import re
 import shutil
 import subprocess
 from datetime import datetime
 
+import gsw
+import matplotlib.image as mpimg
 import numpy as np
 import pandas as pd
 import xarray as xr  # used in get_latlon()
-import gsw
-
+from matplotlib import (
+    cm,
+    patheffects,  # <-- THIS is required
+)
+from matplotlib import pyplot as plt
 from netCDF4 import Dataset
 from scipy.integrate import cumulative_trapezoid
-
-import matplotlib.image as mpimg
-from matplotlib import pyplot as plt
-from matplotlib import cm
-from matplotlib import patheffects  # <-- THIS is required
-
 
 # -------------------------------------------------------------
 # Paths & Constants

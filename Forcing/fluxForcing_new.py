@@ -625,6 +625,10 @@ def create_3x3_mixing_summary_csv(csv_name="mixing_summary.csv", diurnal=True):
     _create_3x3_mixing_heatmap(outfile, outname)
 
 
+# -------------------------------------------------------------
+# Heatmap Plotting
+# -------------------------------------------------------------
+
 def _annotate_heatmap_cells(ax, data, fmt="{:.1f}"):
     """
     Annotate each cell of a heatmap with its numeric value.

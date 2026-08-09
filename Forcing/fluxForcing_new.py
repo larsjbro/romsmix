@@ -295,7 +295,7 @@ def mixing_regime_summary(romsfile, tke_threshold=1e-6):
     # 0 = convective, 1 = shear-driven, 2 = stable
     # Initialize with NaN so "unclassified" stays NaN
     stability = np.full_like(Ri, np.nan, dtype=float)
-    
+
     # Shear-driven: 0 <= Ri < 0.25
     stability[(Ri >= 0) & (Ri < 0.25) & valid] = 1
 
@@ -628,6 +628,7 @@ def create_3x3_mixing_summary_csv(csv_name="mixing_summary.csv", diurnal=True):
 # -------------------------------------------------------------
 # Heatmap Plotting
 # -------------------------------------------------------------
+
 
 def _annotate_heatmap_cells(ax, data, fmt="{:.1f}"):
     """

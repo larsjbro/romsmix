@@ -142,7 +142,7 @@ OLD_EXPERIMENT_ID = {new_id: old_id for old_id, new_id in NEW_EXPERIMENT_ID.item
 # Utility Functions
 # -------------------------------------------------------------
 def now():
-    """Return current date time on isoformat: yyyy-mm-ddThhmmss"""
+    """Return timestamp yyyy-mm-ddThhmmss."""
     return datetime.now().isoformat("T", "seconds").replace(":", "")
 
 
@@ -289,14 +289,13 @@ def mixing_regime_summary(romsfile, tke_threshold=1e-6):
     v = f.variables["v"][:, :, 7, 6]
 
     Ri = gradient_richardson_number(rho, u, v, z)
-
-    # Initialize with NaN so "unclassified" stays NaN
-    stability = np.full_like(Ri, np.nan, dtype=float)
-
     valid = ~np.isnan(Ri)
 
     # Stability classification
     # 0 = convective, 1 = shear-driven, 2 = stable
+    # Initialize with NaN so "unclassified" stays NaN
+    stability = np.full_like(Ri, np.nan, dtype=float)
+    
     # Shear-driven: 0 <= Ri < 0.25
     stability[(Ri >= 0) & (Ri < 0.25) & valid] = 1
 
@@ -313,10 +312,9 @@ def mixing_regime_summary(romsfile, tke_threshold=1e-6):
     stable_fraction = np.nansum(stability == 2) / n_valid
     unstable_fraction = 1 - stable_fraction
 
-    mld_times, mld_indices = compute_mld_density(
-        f, i=7, j=6, drho_crit=0.03, return_index=True
-    )
+    mld_times = compute_mld_density(f)
     mld_stats = computestats(mld_times)
+
     sst = get_sst(f)
     sst_stats = computestats(sst)
 
@@ -333,6 +331,9 @@ def mixing_regime_summary(romsfile, tke_threshold=1e-6):
     }
 
 
+# -------------------------------------------------------------
+# CSV + LaTeX Table Generation
+# -------------------------------------------------------------
 def csv_to_latex_matrix(
     csv_file, caption="3×3 Mixing Regime Matrix", label="tab:mixing_matrix"
 ):
@@ -471,7 +472,7 @@ def create_summary_tables():
     winds = [5, 10, 15]
     clouds = [0, 50, 100]  # in % #[0.0, 0.5, 1.0]  # in fraction
     num = DIURNAL_EXPERIMENT_NO[(100, 15)]
-    result_folder = os.path.join(RESULT_FOLDER, find_latest_experiment_folder(num))
+
     summary = {}
     for diurnal in [True, False]:
         experiment_no = DIURNAL_EXPERIMENT_NO if diurnal else STABLE_EXPERIMENT_NO
@@ -953,7 +954,7 @@ def move_results(folder):
         "roms_his.nc",
         "roms_rst.nc",
     ]:
-        log = subprocess.run(
+        subprocess.run(
             ["mv", os.path.join(FORCING_FOLDER, fname), os.path.join(folder, fname)],
             capture_output=True,
             text=True,
@@ -1027,7 +1028,7 @@ def plot_density_difference_hovmuller(file1, file2, filename=None):
     cf = plt.contourf(dt, z_r, rho_plot, levels=levels, cmap=cm.RdBu_r)
 
     # 6. Formatting
-    cbar_obj = plt.colorbar(cf, label=r"$\Delta \rho$ [kg/m$^3$]", extend="both")
+    _cbar_obj = plt.colorbar(cf, label=r"$\Delta \rho$ [kg/m$^3$]", extend="both")
 
     # Manually set ticks
     # custom_ticks = np.arange(-4, 4.2, 1)
@@ -1592,7 +1593,7 @@ def plot_speed_difference_hovmuller(file1, file2, filename=None):
     cf = plt.contourf(dt, z_r, speed_plot, levels=levels, cmap=cm.RdBu_r)
 
     # 7. Formatting
-    cbar_obj = plt.colorbar(cf, label=r"$\Delta |U|$ [cm/s]", extend="both")
+    _cbar_obj = plt.colorbar(cf, label=r"$\Delta |U|$ [cm/s]", extend="both")
 
     # Manually set ticks
     # custom_ticks = np.arange(-4, 4.2, 1)
@@ -1765,7 +1766,6 @@ def plot_hodograph(romsfile, savefile=False, ext=".png"):
         u = f.variables["u_eastward"][:, -1, 7, 6]
         v = f.variables["v_northward"][:, -1, 7, 6]
 
-        dt = 3600  # Output time step
         plt.plot([0], [0], "rd")
 
         if i == 0:
@@ -1781,7 +1781,6 @@ def plot_hodograph(romsfile, savefile=False, ext=".png"):
             )
         # plt.show()
 
-        # Close file
         f.close()
 
 
@@ -1801,13 +1800,6 @@ def get_latlon(i, j):
 
     print(f"Latitude: {lat_value.values}")
     print(f"Longitude: {lon_value.values}")
-
-
-def get_density(file_path="roms_his.nc"):
-
-    ds = xr.open_dataset(file_path)
-    # Velg første tidspunkt og midtre lag for tetthet
-    rho_data = ds["rho"].isel(ocean_time=0, s_rho=len(ds["s_rho"]) // 2)
 
 
 def calculate_roms_cell_volume(file_path: str):
@@ -1995,8 +1987,7 @@ def plot_heat_flux_evolution(
 
     # Integrate flux over time (convert W/m^2 to J/m^2 by multiplying by seconds)
     # We convert time in days back to seconds for the integration: dt (s) = 86400 * d(days)
-    dt_seconds = np.diff(otime) * 86400
-    heat_content = cumulative_trapezoid(qnet, x=otime * 86400, initial=0)
+    heat_content = cumulative_trapezoid(qnet, x=otime * SEC_PER_DAY, initial=0)
 
     fig, (ax1, ax2) = plt.subplots(
         2, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF), sharex=True
@@ -2313,8 +2304,8 @@ def calculate_model_heat_stats_single_point(ds_his, rho0=1025.0, Cp=3985.0):
     dt_his = np.mean(np.diff(his_sec))
 
     # 1. Grid Area
-    area0 = 1.0 / (ds_his["pm"] * ds_his["pn"])
-    total_area0 = area0.sum(dim=["eta_rho", "xi_rho"]).item()
+    # area0 = 1.0 / (ds_his["pm"] * ds_his["pn"])
+    # total_area0 = area0.sum(dim=["eta_rho", "xi_rho"]).item()
 
     # 2. Calculate area and total area
     # pm and pn are 1/dx and 1/dy
@@ -2854,7 +2845,7 @@ def plot_cons_temp_difference_hovmuller(file1, file2, filename=None):
     levels = np.linspace(-limit, limit, 51)
 
     ct_plot = np.clip(ct_diff, -limit, limit)
-    cf = plt.contourf(dt, z_r, ct_diff, levels=levels, cmap=cm.RdBu_r)
+    cf = plt.contourf(dt, z_r, ct_plot, levels=levels, cmap=cm.RdBu_r)
 
     # 7. Formatting
     cbar = plt.colorbar(cf)
@@ -3032,14 +3023,8 @@ def plot_absolute_salinity(romsfile, filename=None):
     # Get vertical coordinate
     z_rho = f.variables["z_rho"][:, :, 7, 6]
 
-    # Get density
-    rho = f.variables["rho"][:, :, 7, 6]
-
     # Get salt
     salt = f.variables["salt"][:, :, 7, 6]
-
-    # Get temp
-    temp = f.variables["temp"][:, :, 7, 6]
 
     # Convert salinity and temperature from ROMS to TEOS-10 standards
     p = gsw.conversions.p_from_z(z_rho, lat=60.0)
@@ -3047,8 +3032,8 @@ def plot_absolute_salinity(romsfile, filename=None):
 
     # Get time
     otime = f.variables["ocean_time"][:]
-    otime = otime / (24 * 3600.0)
-    ny = np.shape(rho)[1]
+    otime = otime / SEC_PER_DAY
+    ny = np.shape(salt)[1]
     dt = np.array(
         [
             otime,
@@ -3085,7 +3070,6 @@ def plot_absolute_salinity(romsfile, filename=None):
         plt.close()
     # plt.show()
 
-    # Close file
     f.close()
 
 
@@ -3177,11 +3161,11 @@ def plots():
     # experiments = (2, 8)
     # experiments = (1, 9)
     new_experiments = list(range(1, 10)) + list(range(11, 20))
-    experiments = list(range(28, 34)) + list(range(46, 58))
-    folders = [find_latest_experiment_folder(i) for i in experiments]
+    # experiments = list(range(28, 34)) + list(range(46, 58))
+    # for experiment in experiments:
+    # folders = [find_latest_experiment_folder(i) for i in experiments]
+    # for folder in folders:
     for new_experiment in new_experiments:
-        # for experiment in experiments:
-        # for folder in folders:
         experiment = OLD_EXPERIMENT_ID[new_experiment]
         # new_experiment = NEW_EXPERIMENT_ID[experiment]
 
@@ -3223,8 +3207,9 @@ def plots():
             # plot_heat_flux_components(romsfile, filename=os.path.join(root, 'heat_flux_components' +ext))
 
             # plot_thermodynamic_fluxes(romsfile, forcing_file, filename=os.path.join(root, 'thermodynamic_fluxes' + ext))
-            # plt.show()
             # calculate_roms_cell_volume(romsfile)
+
+            # plt.show()
 
 
 def plot_kaihc(ext=".png"):
@@ -3235,7 +3220,6 @@ def plot_kaihc(ext=".png"):
         if experiment.startswith("U10_"):
             folder = os.path.join(root, experiment)
             romsfile = os.path.join(folder, f"KHC-his.nc-{experiment}")
-            forcing_file = os.path.join(folder, f"roms_bulkforce.nc-{experiment}")
             plot_density_hovmuller(
                 romsfile,
                 maxdensity=0.0,
@@ -3425,7 +3409,7 @@ def compare_ncdiff():
         exp_num1, exp_num2 = experiments
         ext = ".png"
         difftxt = f"diff{exp_num1}-{exp_num2}"
-        romsfile = os.path.join(folder2, f"roms_his_{difftxt}.nc")
+        # romsfile = os.path.join(folder2, f"roms_his_{difftxt}.nc")
         # forcing_file = os.path.join(folder, 'roms_frc.nc')
         romsfile1 = os.path.join(folder1, "roms_his.nc")
         romsfile2 = os.path.join(folder2, "roms_his.nc")
@@ -3633,10 +3617,10 @@ def compute_mixed_layer_shear_stats(
     u = f.variables["u"][:, :, 7, 6]
     v = f.variables["v"][:, :, 7, 6]
 
-    x_r = f.variables["x_rho"]
-    y_r = f.variables["y_rho"]
+    # x_r = f.variables["x_rho"]
+    # y_r = f.variables["y_rho"]
 
-    nt, nz = z_r.shape
+    # nt, nz = z_r.shape
 
     # ---------------------------------------------------------------
     # 2. Compute vertical shear magnitude
@@ -3921,8 +3905,6 @@ def inertial_vs_wind_older(romsfile: str, target_depth: float = -20.0):
     mean_depth_profile = np.mean(z, axis=0)
     # Find index where depth is closest to target_depth
     mld_idx = np.abs(mean_depth_profile - target_depth).argmin()
-
-    actual_depth = mean_depth_profile[mld_idx]
 
     # 3. Calculate Shear
     # Use np.gradient with the actual z-coordinate array for physical accuracy

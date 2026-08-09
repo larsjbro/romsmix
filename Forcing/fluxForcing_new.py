@@ -1,13 +1,17 @@
-import re
 import os
-import glob
+import re
 import csv
-import pandas as pd
-import subprocess
+import glob
 import shutil
+import subprocess
 from datetime import datetime
 
 import numpy as np
+import pandas as pd
+import xarray as xr  #used in get_latlon()
+import gsw
+
+from netCDF4 import Dataset
 from scipy.integrate import cumulative_trapezoid
 
 import matplotlib.image as mpimg
@@ -15,10 +19,10 @@ from matplotlib import pyplot as plt
 from matplotlib import cm
 from matplotlib import patheffects   # <-- THIS is required
 
-import gsw
-import xarray as xr  #used in get_latlon()
 
-from netCDF4 import Dataset
+# -------------------------------------------------------------
+# Paths & Constants
+# -------------------------------------------------------------
 FORCING_FOLDER = os.path.dirname(__file__)
 ROOT = os.path.dirname(FORCING_FOLDER)
 RUN_FOLDER = os.path.join(ROOT, 'Run')
@@ -35,9 +39,13 @@ PLOT_DEPTH_MAX = -60
 # The height is set using the golden ratio for a pleasing aesthetic
 FIG_WIDTH_HALF = 3.3
 FIG_HEIGTH_HALF = FIG_WIDTH_HALF * 0.618
-FIG_WIDTH_FULL = 2*3.3
+FIG_WIDTH_FULL = 2 * FIG_WIDTH_HALF
 FIG_HEIGTH_FULL = FIG_WIDTH_FULL * 0.618
 
+
+# -------------------------------------------------------------
+# Experiment ID Mapping
+# -------------------------------------------------------------
 # (cloud, wind) → experiment number
 DIURNAL_EXPERIMENT_NO = {
     ("0.0", 5): 30, ("0.0", 10): 28, ("0.0", 15): 32,
@@ -91,61 +99,155 @@ NEW_EXPERIMENT_ID = { #  old ID -> New ID
 OLD_EXPERIMENT_ID = {new_id: old_id for old_id, new_id in NEW_EXPERIMENT_ID.items()} 
 
 
+# -------------------------------------------------------------
+# Utility Functions
+# -------------------------------------------------------------
+def now():
+    """Return current date time on isoformat: yyyy-mm-ddThhmmss"""
+    return datetime.now().isoformat("T", "seconds").replace(':', '')
+
+
+def extract_experiment_number(filename_string):
+    """Extract digits following '_exp'."""
+    match = re.search(r'_exp(\d+)', filename_string)
+    
+    if match:
+        return int(match.group(1))
+    
+    return None
+
+
 def computestats(data, return_state=True):
-    """Return mean, min, max, std and data[0], data[-1]"""
+    """Compute mean, std, min, max, and optionally start/end."""
     d_mean = np.nanmean(data)
     d_std = np.nanstd(data)
     d_max = np.nanmax(data)
     d_min = np.nanmin(data)
-    if not return_state:
-        return {
-            'mean': d_mean,
-            'std': d_std,
-            'min' : d_min,
-            'max': d_max,
-        }
 
-    valid_data = np.flatnonzero(~np.isnan(data))
-    i0 = valid_data[0]
-    i1 = valid_data[-1]
-    startstate = data[i0]
-    endstate = data[i1]
+    if not return_state:
+        return {'mean': d_mean, 'std': d_std, 'min': d_min, 'max': d_max}
+
+    valid = np.flatnonzero(~np.isnan(data))
     return {
         'mean': d_mean,
         'std': d_std,
-        'min' : d_min,
+        'min': d_min,
         'max': d_max,
-        'startstate': startstate,
-        'endstate': endstate,
+        'startstate': data[valid[0]],
+        'endstate': data[valid[-1]],
     }
 
+
+# -------------------------------------------------------------
+# Physics Utilities
+# -------------------------------------------------------------
+def gradient_richardson_number(rho, u, v, z, g=9.81, rho0=1025):
+    """
+    Compute gradient Richardson number.
+
+    Parameters
+    ----------
+    rho : array (nt, nz)
+        Density [kg/m^3]
+    u, v : arrays (nt, nz)
+        Horizontal velocities [m/s]
+    z : array (nz)
+        Vertical coordinate [m] (negative downward)
+    g : float
+        Gravity
+    rho0 : float
+        Reference density
+
+    Returns
+    -------
+    Ri_g : array (nt, nz-1)
+        Gradient Richardson number
+    """
+
+    # Vertical derivatives
+    drho_dz = np.gradient(rho, z, axis=1)
+    du_dz   = np.gradient(u,   z, axis=1)
+    dv_dz   = np.gradient(v,   z, axis=1)
+
+    # Buoyancy frequency
+    N2 = -(g / rho0) * drho_dz  # Brunt Väisala
+
+    # Vertical shear
+    shear2 = du_dz**2 + dv_dz**2
+    # Avoid division by zero
+    shear2[shear2 == 0] = np.nan
+
+    return N2 / shear2
+
+
+# -------------------------------------------------------------
+# Diagnostics (MLD, SST)
+# -------------------------------------------------------------
+def get_sst(f):
+    """Extract SST from ROMS file."""
+
+    # Extracting temperature at the surface (index -1) for coordinates 7, 6
+    # temp variable is typically [time, s_rho, eta_rho, xi_rho]
+    return f.variables['temp'][:, -1, 7, 6] 
+
+
+def compute_mld_density(f, i=7, j=6, drho_crit=0.03, return_index=False):
+    """
+    Compute MLD from density threshold. 
+
+    Parameters
+    ----------
+    f : netCDF4.Dataset
+        Open ROMS history/avg file.
+    i, j : int
+        Horizontal indices.
+    drho_crit : float
+        Density difference threshold (default 0.03 kg/m^3).
+    return_index : bool
+        If True both mld and mld_idx are returned, 
+        otherwise only mld.
+
+    Returns
+    -------
+    mld : array (nt,)
+        Mixed layer depth (negative values).
+    mld_idx: array (nt,)
+        Indices to mixed layer depth
+    """
+
+    rho = f.variables["rho"][:, :, j, i]     # (nt, nz)
+    z_r = f.variables["z_rho"][:, :, j, i]   # (nt, nz)
+
+    nt, _nz = rho.shape
+    mld = np.full(nt, np.nan, dtype=float)
+    mld_idx = np.full(nt, 0, dtype=int)
+
+    for t in range(nt):
+        rho_sfc = rho[t, -1]                 # surface density (last index)
+        diff = np.abs(rho[t, :] - rho_sfc)
+        idx = np.where(diff >= drho_crit)[0]
+
+        if len(idx) > 0:
+            mld_idx[t] = idx[-1]
+            mld[t] = z_r[t, idx[-1]]         # first depth satisfying criterion
+    if return_index:
+        return mld, mld_idx
+    return mld
+
+# -------------------------------------------------------------
+# Mixing Regime Classification
+# -------------------------------------------------------------
 def mixing_regime_summary(romsfile, tke_threshold=1e-6):
-    """
-    Compute mixing regime summary for one ROMS experiment.
-
-    Returns a dict with:
-        mixed_layer_depth
-        convective_fraction
-        shear_fraction
-        stable_fraction
-    """
-
+    """Compute mixing regime summary for one ROMS experiment."""
     f = Dataset(romsfile, 'r')
-    # Extract vertical coordinate at rho-points 
+
     z_rho = f.variables['z_rho'][:,:,7,6]   # (nt, nz)
     z = z_rho[0,:]                          # (nz,)
 
-    z_w   = f.variables['z_w'][:,:,7,6]     # (nt, nz+1)
-    z_w_1d = z_w[0,:]                       # 1D (nz+1)
-
-    # Extract variables
-    rho = f.variables['rho'][:,:,7,6]       # (nt, nz)
+    rho = f.variables['rho'][:, :, 7, 6]       # (nt, nz)
     u   = f.variables['u'][:,:,7,6]
     v   = f.variables['v'][:,:,7,6]
-    tke = f.variables['tke'][:,:,7,6]
 
-    nt, nz = rho.shape
-   
     Ri = gradient_richardson_number(rho, u, v, z)
 
     # Initialize with NaN so "unclassified" stays NaN
@@ -165,33 +267,16 @@ def mixing_regime_summary(romsfile, tke_threshold=1e-6):
     stability[(Ri < 0) & valid] = 0
 
     # Fractions 
-    total_points = nt * nz
     n_valid = np.sum(valid)
-    n_undefined = np.sum(~valid)
     convective_fraction = np.nansum(stability == 0) / n_valid
     shear_fraction      = np.nansum(stability == 1) / n_valid
     stable_fraction     = np.nansum(stability == 2) / n_valid
     unstable_fraction = 1 - stable_fraction
-    # Undefined fraction (relative to total)
-    undefined_fraction = n_undefined / (n_valid + n_undefined)
 
-    # Mixed layer depth (from TKE) 
-    # For each time, find deepest depth where TKE > threshold
-    #mld_times = compute_mld_tke(f, i=7, j=6, tke_factor=tke_threshold, adaptive=False)
     mld_times, mld_indices = compute_mld_density(f, i=7, j=6, drho_crit=0.03, return_index=True)
     mld_stats = computestats(mld_times)
     sst = get_sst(f)
     sst_stats = computestats(sst)
-
-    tke = f.variables['tke'][:,:,7,6]
-    otime = f.variables['ocean_time'][:] / SEC_PER_DAY
-    valid_depths = ~np.isnan(mld_times)
-    for t in np.flatnonzero(valid_depths):
-        idx = int(mld_indices[t])
-        tke[t, :idx] = np.nan
-
-    tke_stats = computestats(tke, return_state=False)
-
 
     f.close()
 
@@ -199,12 +284,10 @@ def mixing_regime_summary(romsfile, tke_threshold=1e-6):
         "mixed_layer_depth": mld_stats["mean"],
         "mld_stats": mld_stats,
         "sst_stats": sst_stats,
-        "tke_stats": tke_stats,
         "convective_fraction": convective_fraction,
         "shear_fraction": shear_fraction,
         "unstable_fraction": unstable_fraction,
         "stable_fraction": stable_fraction,
-        "undefined_fraction": undefined_fraction,
     }
 
 
@@ -581,66 +664,6 @@ def _create_3x3_mixing_heatmap(csv_file, outname="mixing_heatmap.png"):
     print(f"Heatmap saved to {outname}")
 
 
-def gradient_richardson_number(rho, u, v, z, g=9.81, rho0=1025):
-    """
-    Compute gradient Richardson number Ri_g from ROMS output.
-
-    Parameters
-    ----------
-    rho : array (nt, nz)
-        Density [kg/m^3]
-    u, v : arrays (nt, nz)
-        Horizontal velocities [m/s]
-    z : array (nz)
-        Vertical coordinate [m] (negative downward)
-    g : float
-        Gravity
-    rho0 : float
-        Reference density
-
-    Returns
-    -------
-    Ri_g : array (nt, nz-1)
-        Gradient Richardson number
-    """
-
-    # Vertical derivatives
-    drho_dz = np.gradient(rho, z, axis=1)
-    du_dz   = np.gradient(u,   z, axis=1)
-    dv_dz   = np.gradient(v,   z, axis=1)
-
-    # Buoyancy frequency
-    N2 = -(g / rho0) * drho_dz  # Brunt Väisala
-
-    # Vertical shear
-    shear2 = du_dz**2 + dv_dz**2
-    # Avoid division by zero
-    shear2[shear2 == 0] = np.nan
-
-    # Richardson number
-    Ri_g = N2 / shear2
-
-    return Ri_g
-
-
-def now():
-    """Returns current date time on isoformat: yyyy-mm-ddThhmmss"""
-    return datetime.now().isoformat("T", "seconds").replace(':', '')
-
-
-def extract_experiment_number(filename_string):
-    """
-    Extracts the digits following '_exp' in a ROMS simulation string.
-    """
-    # Search for '_exp' followed by one or more digits (\d+)
-    match = re.search(r'_exp(\d+)', filename_string)
-    
-    if match:
-        return int(match.group(1))
-    
-    return None
-
-
 def print_forcing_info(filename, names=None):
     f = Dataset(filename, 'r')
     if names is None:
@@ -653,7 +676,7 @@ def print_forcing_info(filename, names=None):
         print(name, vmin, avg, vmax)
         print('')
 
-def make_bulkforce_file(diurnal=True, sw_amplitude=800.0, cloud=0.0, u_wind=15.0):
+def make_bulkforce_file(diurnal=True, sw_amplitude=800.0, cloud=0.0, u_wind=15.0, num_days_with_wind=7):
     """Generate bulk forcing file"""
     # Generate empty forcing file and open for editing
     os.system('ncgen -b roms_bulkforce.cdl')
@@ -702,8 +725,12 @@ def make_bulkforce_file(diurnal=True, sw_amplitude=800.0, cloud=0.0, u_wind=15.0
     # # ot.units == 'modified Julian day'
     num_time_steps = len(ot) #169
     #timevec = np.linspace(0.0,7*24*3600.0,num_time_steps) 
-    timevec = np.linspace(0.0,7.0,num_time_steps)
+    max_days = 7.0
+    timevec = np.linspace(0.0, max_days, num_time_steps)
     ot[:] = timevec
+    if num_days_with_wind < max_days:
+        i0 = np.argmin(np.abs(timevec-num_days_with_wind))
+        f.variables['Uwind'][i0:,:,:] = 0
 
     # Setting shortwave diurnal cycle
     swrad = np.zeros_like(f.variables['swrad'][:])
@@ -992,7 +1019,7 @@ def plot_Ri_hovmuller(romsfile, filename=None):
     plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
     plt.xlim((-0.5, 7.5))
     plt.xlabel('Days')
-    plt.legend(loc='lower left', framealpha=0.6)
+    plt.legend(loc='lower left', framealpha=0.4)
 
     # Save or show
     if filename:
@@ -1065,7 +1092,7 @@ def plot_stability_hovmuller(romsfile, filename=None, reverse_classification=Tru
     #plt.title("Stability Classification (Richardson Number)")
     plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
     plt.xlim((-0.5, 7.5))
-    plt.legend(loc='lower left', framealpha=0.6)
+    plt.legend(loc='lower left', framealpha=0.4)
 
     # Save or show
     if filename:
@@ -1168,15 +1195,20 @@ def plot_tke_hovmuller(romsfile,  filename=None):
     plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
 
     # Plot filled contours
-    lower, upper = (-9, 0)
-    levels = list(range(lower, upper+1, 1))
+    
+    vmin, vmax = (-16, 0)
+    levels = list(range(vmin, vmax+1, 2))
+    levels = np.linspace(vmin, vmax, 100)
+    log_tke = np.clip(np.log(tke), vmin, vmax)
 
-    log_tke = np.clip(np.log(tke), lower, upper)
-
-    plt.contourf(dt, z_w, log_tke, levels=levels)
+    plt.contourf(dt, z_w, log_tke, levels=levels, cmap='inferno', vmin=vmin, vmax=vmax)
 
     # Add info 
-    plt.colorbar(label='log TKE [$m^2/s^2$]', extend='both')
+    cbar_obj = plt.colorbar(label='log TKE [$m^2/s^2$]', extend='both')
+    
+    # Manually set ticks
+    custom_ticks = list(range(vmin, vmax, 2))
+    cbar_obj.set_ticks(custom_ticks)
     #plt.colorbar(label='TKE difference [$m^2/s^2$]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.ylabel('Depth [m]')
@@ -1186,7 +1218,7 @@ def plot_tke_hovmuller(romsfile,  filename=None):
     plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
     plt.xlim((-0.5, 7.5))
     plt.xlabel('Days')
-    plt.legend(loc='lower left', framealpha=0.6)
+    plt.legend(loc='lower left', framealpha=0.4)
     #plt.show()
     if filename:
         plt.savefig(filename, dpi=300, bbox_inches='tight')
@@ -1278,49 +1310,6 @@ def compute_mld_tke(f, i=7, j=6, tke_factor=1e-3, adaptive=True):
 
     return mld_tke
 
-def compute_mld_density(f, i=7, j=6, drho_crit=0.03, return_index=False):
-    """
-    Compute density-based MLD using the criterion:
-        |rho(z) - rho(surface)| >= drho_crit
-
-    Parameters
-    ----------
-    f : netCDF4.Dataset
-        Open ROMS history/avg file.
-    i, j : int
-        Horizontal indices.
-    drho_crit : float
-        Density difference threshold (default 0.03 kg/m^3).
-    return_index : bool
-        If True both mld and mld_idx are returned, 
-        otherwise only mld.
-
-    Returns
-    -------
-    mld : array (nt,)
-        Mixed layer depth (negative values).
-    mld_idx: array (nt,)
-        Indices to mixed layer depth
-    """
-
-    rho = f.variables["rho"][:, :, j, i]     # (nt, nz)
-    z_r = f.variables["z_rho"][:, :, j, i]   # (nt, nz)
-
-    nt, _nz = rho.shape
-    mld = np.full(nt, np.nan, dtype=float)
-    mld_idx = np.full(nt, 0, dtype=int)
-
-    for t in range(nt):
-        rho_sfc = rho[t, -1]                 # surface density (last index)
-        diff = np.abs(rho[t, :] - rho_sfc)
-        idx = np.where(diff >= drho_crit)[0]
-
-        if len(idx) > 0:
-            mld_idx[t] = idx[-1]
-            mld[t] = z_r[t, idx[-1]]         # first depth satisfying criterion
-    if return_index:
-        return mld, mld_idx
-    return mld
 
 def compute_entrainment_rate(mld, time_days):
     """
@@ -2082,14 +2071,15 @@ def calculate_forcing_heat_stats_2D_with_boundary(ds_his):
     his_sec, his_days = robust_time_conversion(ds_his['ocean_time'])
     dt = np.mean(np.diff(his_sec))
     
-    # 1. Grid Area
+    # 1. Calculate individual cell areas (dx * dy)
+    # pm = 1/dx, pn = 1/dy -> area = 1/(pm*pn)
     area = 1.0 / (ds_his['pm'] * ds_his['pn'])
     total_area = area.sum(dim=['eta_rho', 'xi_rho']).item()
     
     # 2. Surface Flux (W/m^2)
     # shflux is the net surface heat flux (SW + LW + Latent + Sensible)
     net_flux_wm2 = ds_his['shflux'] 
-    constant = 170 
+
     # 3. Total Integrated Forcing (Watts)
     # Multiply flux in every cell by that cell's area, then sum
     total_forcing_watts = (net_flux_wm2 * area ).sum(dim=['eta_rho', 'xi_rho'])
@@ -2277,28 +2267,56 @@ def verify_heat_content(his_file: str, filename: str=''):
         # 2. Calculate Forcing Side
         forcing_flux, cum_forcing = calculate_forcing_heat_stats_2D_interior(ds_his)
 
+        # Scale heat content to mega (MJ/m²)
+        model_heat_change = model_heat_change / 1e6
+        cum_forcing = cum_forcing / 1e6
+
+        # Compute means
+        mhc_mean = model_heat_change.mean().item()
+        cf_mean  = cum_forcing.mean().item()
+        mhr_mean = model_heat_rate.mean().item()
+        ff_mean  = forcing_flux.mean().item()
+
         # 3. Plotting
         fig, axes = plt.subplots(2, 1, figsize=(FIG_HEIGTH_FULL, FIG_HEIGTH_FULL), sharex=True)
 
         model_heat_change.plot(ax=axes[0], label='Model Heat Change') #, marker='o')
         cum_forcing.plot(ax=axes[0], label='Cumulative Forcing Input', linestyle='--') #,marker='x')
         #axes[0].set_title('Total Heat Content vs. Cumulative Flux')
-        axes[0].legend(framealpha=0.6)
+
+         # Add mean lines
+        axes[0].axhline(model_heat_change.mean().item(),
+                        color='C0', linestyle=':', label=f'μ(model) = {mhc_mean:.1f}')  # Mean Model Heat Change
+        axes[0].axhline(cum_forcing.mean().item(),
+                        color='C1', linestyle=':', label=f'μ(forcing) = {cf_mean:.1f}') #'Mean Cumulative Forcing')
+        
+        axes[0].legend(framealpha=0.4)
         axes[0].grid(True)
         axes[0].set_xticks(np.arange(0, 8, 1))
         axes[0].set_xticklabels([str(i) for i in range(0, 8)])
+        axes[0].set_ylim(-2, 70)
         axes[0].set_xlim(-0.5, 7.5) # Adjusting limits to comfortably display the 0-7 range
         axes[0].set_xlabel('')
+        axes[0].set_ylabel('Heat Content [$MJ/m^2$]')
 
-        model_heat_rate.plot(ax=axes[1], label='Model Heat Rate [$W/m^2$]')  #, marker='o')
-        forcing_flux.plot(ax=axes[1], label=r'Total Forcing Flux [$W/m^2$]', linestyle='--')   # , marker='x')
+        model_heat_rate.plot(ax=axes[1], label='Model Heat Rate')  #, marker='o')
+        forcing_flux.plot(ax=axes[1], label=r'Total Forcing Flux', linestyle='--')   # , marker='x')
         #axes[1].set_title('Comparison: Heat Change Rate')
         #axes[1].set_title('Heat Change Rate')
-        axes[1].legend(loc='best', framealpha=0.6)
+
+        # Add mean lines
+        axes[1].axhline(model_heat_rate.mean().item(),
+                        color='C0', linestyle=':', label=f'μ(model) = {mhr_mean:.1f}')   #  'Mean Model Heat Rate')  #
+        axes[1].axhline(forcing_flux.mean().item(),
+                        color='C1', linestyle=':', label=f'μ(forcing) = {ff_mean:.1f}')  #'Mean Forcing Flux')
+
+        axes[1].legend(loc='best', framealpha=0.4)
         axes[1].grid(True)
         axes[1].set_xticks(np.arange(0, 8, 1))
         axes[1].set_xticklabels([str(i) for i in range(0, 8)])
+        axes[1].set_ylim(-200, 650)
         axes[1].set_xlim(-0.5, 7.5) # Adjusting limits to comfortably display the 0-7 range
+        axes[1].set_ylabel('Heat Flux [$W/m^2$]')
         axes[1].set_xlabel('Days')
 
         plt.tight_layout()
@@ -2429,6 +2447,7 @@ def plot_heat_flux_components(his_file: str, filename=None):
     plt.grid(True, alpha=0.2)
     plt.tight_layout()
     plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.ylim((-200, 800))
     plt.xlim((-0.5, 7.5))
     if filename:
         plt.savefig(filename, dpi=300, bbox_inches='tight')
@@ -2561,6 +2580,8 @@ def plot_conservative_temp(romsfile, filename=None):
     """Open history files and plot conservative temperature profiles"""
     f = Dataset(romsfile, 'r')
 
+    mld = compute_mld_density(f)
+
     # Get vertical coordinate
     z_rho = f.variables['z_rho'][:,:,7,6]
 
@@ -2594,7 +2615,7 @@ def plot_conservative_temp(romsfile, filename=None):
 
     # Get time
     otime = f.variables['ocean_time'][:]
-    otime = otime/(24*3600.)
+    otime = otime/SEC_PER_DAY
     ny = np.shape(rho)[1]
     dt = np.array([otime,]*ny).transpose()
 
@@ -2612,16 +2633,28 @@ def plot_conservative_temp(romsfile, filename=None):
     # Plot filled contours
     # plt.contourf(dt, z_rho, salt, 200, cmap=cm.ocean_r)
     # plt.contourf(dt, z_rho, temp, 200, cmap=cm.ocean_r)
-    levels = np.linspace(10, 22, 51)
-    plt.contourf(dt, z_rho, CT, levels=levels, cmap=cm.ocean_r)
+    vmin, vmax = 11, 21
+    #levels = np.linspace(10, 22, 51)
+    #plt.contourf(dt, z_rho, CT, levels=levels, cmap=cm.ocean_r)
+    # Alternative cmaps: YlOrRd, inferno, gist_earth, viridis  
+    plt.contourf(dt, z_rho, CT, levels=100, cmap='inferno', vmin=vmin, vmax=vmax)
+
+    plt.plot(otime, mld, '-', color='magenta', label='MLD')
     #plt.colorbar(label=r'Conservative Temperature [$C^{\circ}$]')
-    plt.colorbar(label=r'$\Theta$ [$C^{\circ}$]')
+    cbar_obj = plt.colorbar(label=r'$\Theta$ [$C^{\circ}$]', extend='both')
+
+    # Manually set ticks
+    custom_ticks = list(range(vmin, vmax, 1))
+    cbar_obj.set_ticks(custom_ticks)
+    plt.legend(framealpha=0.4)
+
     plt.xlabel('Days')
     plt.ylabel('Depth [m]')
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
     plt.xlim((-0.5, 7.5))
     plt.grid(axis='x')
+    
     if filename:
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close()
@@ -2629,14 +2662,6 @@ def plot_conservative_temp(romsfile, filename=None):
 
     # Close file
     f.close()
-
-def get_sst(f):
-    """Return SST as function of time"""
-
-    # Extracting temperature at the surface (index -1) for coordinates 7, 6
-    # temp variable is typically [time, s_rho, eta_rho, xi_rho]
-    sst = f.variables['temp'][:, -1, 7, 6] 
-    return sst
 
 
 def plot_sst_evolution(romsfile: str, filename: str = 'sst_evolution.png') -> None:
@@ -2752,7 +2777,7 @@ def plot_absolute_salinity(romsfile, filename=None):
 
 
 
-def main(exp_name, useflux=True, diurnal=True, sw_amplitude=800.0, cloud=0.0, u_wind=15.0):
+def main(exp_name, useflux=True, diurnal=True, sw_amplitude=800.0, cloud=0.0, u_wind=15.0, num_days_with_wind=8):
     """ 
     - Makes flux forcing file or bulk forcing file
     - Run current compiled ROMS model using the flux forcing file 
@@ -2763,7 +2788,13 @@ def main(exp_name, useflux=True, diurnal=True, sw_amplitude=800.0, cloud=0.0, u_
     if useflux:
         make_flux_force_file()
     else:
-        make_bulkforce_file(diurnal, sw_amplitude=sw_amplitude, cloud=cloud, u_wind=u_wind)
+        make_bulkforce_file(
+            diurnal, 
+            sw_amplitude=sw_amplitude, 
+            cloud=cloud, 
+            u_wind=u_wind, 
+            num_days_with_wind=num_days_with_wind
+        )
     folder = os.path.join(RESULT_FOLDER, now() + exp_name)
     run_roms(folder)
     ext = '.png'
@@ -2784,7 +2815,9 @@ def main(exp_name, useflux=True, diurnal=True, sw_amplitude=800.0, cloud=0.0, u_
     #if useflux:
     verify_heat_content(romsfile, filename=os.path.join(folder, 'verify_heat_content' + ext))
     plot_heat_flux_components(romsfile, filename=os.path.join(folder, 'heat_flux_components' +ext))
-    
+    plot_Ri_hovmuller(romsfile, filename=os.path.join(folder, 'Ri_hovmuller' + ext))
+    plot_tke_hovmuller(romsfile, filename=os.path.join(folder, 'tke_hovmuller' + ext))
+    plot_velocity_hovmuller(romsfile, filename=os.path.join(folder, 'velocity_hovmuller' +ext))
     plt.show()
 
 
@@ -2809,12 +2842,15 @@ def plots():
     # folders = os.listdir(RESULT_FOLDER)
     #experiments = (2, 8)
     #experiments = (1, 9)
+    new_experiments = list(range(1, 10)) + list(range(11, 20))
     experiments = list(range(28, 34)) + list(range(46, 58))
     folders = [find_latest_experiment_folder(i) for i in experiments]
-    for experiment in experiments:
+    for new_experiment in new_experiments:
+    #for experiment in experiments:
     #for folder in folders:
-        
-        new_experiment = NEW_EXPERIMENT_ID[experiment]
+        experiment = OLD_EXPERIMENT_ID[new_experiment]
+        #new_experiment = NEW_EXPERIMENT_ID[experiment]
+
         new_experiment_no = f"E{new_experiment:02}"
         cloud_cover, wind = NEW_EXPERIMENT_ID_TO_CLOUD_WIND[new_experiment]
         folder = find_latest_experiment_folder(experiment) 
@@ -2832,7 +2868,7 @@ def plots():
 
             # plot_hodograph([romsfile], savefile=True)
 
-            #verify_heat_content(romsfile, filename=os.path.join(root, 'verify_heat_content' + ext))
+            verify_heat_content(romsfile, filename=os.path.join(root, 'verify_heat_content' + ext))
             # plot_heat_flux_evolution=verify_heat_content
             # plot_heat_flux_evolution(romsfile, filename=os.path.join(root, 'heat_flux_evolution' + ext))
 
@@ -2844,8 +2880,8 @@ def plots():
             # plot_speed_hovmuller(romsfile, filename=os.path.join(root, 'speed_hovmuller' +ext))
             # plot_velocity_hovmuller(romsfile, filename=os.path.join(root, 'velocity_hovmuller' +ext))
             # plot_absolute_salinity(romsfile, filename=os.path.join(root, 'absolute_salinity' +ext))
-            plot_tke_hovmuller(romsfile, filename=os.path.join(root, 'tke_hovmuller' +ext))
-            #compute_mixed_layer_shear_stats(romsfile, smooth_shear=True, verbose=True)
+            #plot_tke_hovmuller(romsfile, filename=os.path.join(root, 'tke_hovmuller' +ext))
+            compute_mixed_layer_shear_stats(romsfile, smooth_shear=False, verbose=True)
             #inertial_vs_wind(romsfile) #shear enhancement factor, coefficient of variation
 
 
@@ -3031,9 +3067,11 @@ def compare_ncdiff():
         (53, 52), # døgnsyklus vs ikke, vind 10 m/s, cloud 1.0
         (54, 55), # døgnsyklus vs ikke, vind 15 m/s, cloud 1.0
 
-        (28 , 30), #10m/s - 5m/s
+        (28, 30), #10m/s - 5m/s
         (30, 28),  #5m/s - 10m/s
 
+        (30, 46),  # 5m/s, cloud 0-0.5 diurnal
+        (31, 47),  # 5m/s, cloud 0-0.5 averaged
 
         # compare increasing cloud and wind
         (30, 50),
@@ -3131,6 +3169,57 @@ def create_3x3_experiment_grid(plot_name="temp_hovmuller.png", diurnal=True):
     print(f"Matrix saved to {filename}")
 
 
+
+def remove_inertial_band(S, dt, T_inertial=13.8*3600.0, width=0.2, order=4):
+    """
+    Remove the inertial oscillation from a shear time series using a band-stop filter.
+
+    Parameters
+    ----------
+    S : array-like
+        Input shear time series (e.g., at the MLD).
+    dt : float
+        Sampling interval in seconds.
+    T_inertial : float
+        Inertial period in seconds. Default is 13.8 hours.
+    width : float
+        Fractional width of the stop-band around the inertial frequency.
+        Example: width=0.2 gives ±20% around f_inertial.
+    order : int
+        Butterworth filter order.
+
+    Returns
+    -------
+    S_residual : ndarray
+        Signal with the inertial band removed.
+    S_inertial : ndarray
+        The isolated inertial component (original minus residual).
+    """
+    from scipy.signal import butter, filtfilt
+
+    # Convert inertial period to frequency
+    f_inertial = 1.0 / T_inertial
+
+    # Sampling frequency and Nyquist
+    fs = 1.0 / dt
+    nyquist = fs / 2.0
+
+    # Normalized stop-band edges
+    low_cut = (f_inertial * (1 - width)) / nyquist
+    high_cut = (f_inertial * (1 + width)) / nyquist
+
+    # Butterworth band-stop filter
+    b, a = butter(order, [low_cut, high_cut], btype='bandstop')
+
+    # Apply zero-phase filtering
+    S_residual = filtfilt(b, a, S)
+
+    # Inertial component
+    S_inertial = S - S_residual
+
+    return S_residual, S_inertial
+
+
 def compute_mixed_layer_shear_stats(
     romsfile: str,
     drho_crit: float = 0.03,
@@ -3190,6 +3279,9 @@ def compute_mixed_layer_shear_stats(
     u   = f.variables["u"][:, :, 7, 6]
     v   = f.variables["v"][:, :, 7, 6]
 
+    x_r = f.variables["x_rho"]
+    y_r = f.variables["y_rho"]
+
     nt, nz = z_r.shape
 
     # ---------------------------------------------------------------
@@ -3208,11 +3300,13 @@ def compute_mixed_layer_shear_stats(
     # ---------------------------------------------------------------
     # 3. Mixed-layer shear mask (MLD → surface)
     # ---------------------------------------------------------------
+    shear_at_mld = np.full_like(mld_depths, np.nan)
     mld_shear = np.full_like(shear_mag, np.nan)
     for t in valid_times:
         idx = int(mld_indices[t])
         # Shear ABOVE the MLD (MLD depth → surface)
         mld_shear[t, idx:] = shear_mag[t, idx:]
+        shear_at_mld[t] = shear_mag[t, idx]
 
     # ---------------------------------------------------------------
     # 4. Mixed-layer mean shear and CV²
@@ -3239,19 +3333,58 @@ def compute_mixed_layer_shear_stats(
     # ---------------------------------------------------------------
     # 7. Return results (no printing)
     # ---------------------------------------------------------------
+    time_sec = f.variables['ocean_time'][:]
+    dt_all = np.diff(time_sec)
+    dt = np.mean(dt_all)
+    mean_s_mld = np.nanmean(shear_at_mld)
+    var_s_mld = np.nanvar(shear_at_mld)
+    peak_s_mld = np.nanmax(shear_at_mld)
+    cv2_2 = var_s_mld / (mean_s_mld**2 + 1e-10)
+    pmr_2 = 100*peak_s_mld / (mean_s_mld + 1e-10)
+
+    shear_at_mld[np.isnan(shear_at_mld)] = 0
+    shear_residual, shear_inertial  = remove_inertial_band(
+        shear_at_mld, dt, T_inertial=13.8*3600.0, width=0.2, order=4)
     mean_mld = np.nanmean(mld_depths)
+
+    mean_res = np.mean(shear_residual)
+    var_res = np.var(shear_residual)
+    peak_res = np.max(shear_residual)
+    cv2_res = var_res / (mean_res**2 + 1e-10)
+    pmr_res = 100*peak_res / (mean_res + 1e-10)
+
+
+    # plt.figure()
+    # otime =  time_sec/ SEC_PER_DAY
+    # plt.plot(otime, shear_at_mld, label='S')
+    # plt.plot(otime, shear_inertial, label='Si')
+    # plt.plot(otime, shear_residual, label='Sr')
+    # plt.legend()
+
+    # plt.show()
+
     if verbose:
-        print(f"Mean MLD: {mean_mld:.1f}")
+        print(f"Mean MLD: {int(np.round(mean_mld))}")
         #print(f"Mean Shear Value: {mean_shear_val:.4f} s^-1")
         #print(f"Peak Shear Value: {peak_shear_val:.4f} s^-1")
-        print(f"CV^2: {cv2:.2f}")
-        print(f"Peak-to-Mean Shear Ratio: {peak_to_mean_ratio:.1f}")
+        print(f"CV2: {cv2:.2f}")
+        print(f"PMR: {int(np.round(peak_to_mean_ratio))}")
+
+        print(f"CV2_2: {cv2_2:.2f}")
+        print(f"PMR_2: {int(np.round(pmr_2))}")
+
+        print(f"CV2_res: {cv2_res:.2f}")
+        print(f"PMR_res: {int(np.round(pmr_res))}")
+
+        
     return {
         "mean_mld": float(mean_mld),
-        "mean_shear": float(mean_shear_val),
-        "peak_shear": float(peak_shear_val),
-        "cv2": float(cv2),
-        "peak_to_mean_ratio": float(peak_to_mean_ratio)
+        "CV2": float(cv2),
+        "PMR": float(peak_to_mean_ratio),
+        "CV2_2": float(cv2_2),
+        "PMR_2": float(pmr_2),
+        "CV2_res": float(cv2_res),
+        "PMR_res": float(pmr_res),
     }
 
 
@@ -3545,8 +3678,10 @@ def copy_selected_images_to_thesis_folder(
                         
 
 if __name__ == "__main__":
-    # main(exp_name='_exp57_Ninfo_1_strat_F_swradmax_740_bulk_Uwind_15_cloud_0p5_Qair_80_Tair_20_Pair_1020',
-    #      useflux=False, diurnal=True, sw_amplitude=800, cloud=0.5, u_wind=15.0)
+    import matplotlib
+    matplotlib.interactive(True)
+    # main(exp_name='_exp59_Ninfo_1_strat_F_swrad_252_bulk_Uwind_10_cloud_0_Qair_80_Tair_20_Pair_1020',
+    #      useflux=False, diurnal=False, sw_amplitude=800, cloud=0.0, u_wind=10.0, num_days_with_wind=1)
 
     # make_summary()
     #create_summary_tables()
@@ -3554,7 +3689,7 @@ if __name__ == "__main__":
     plots()
     #plot_forcing_comparison()
 
-    compare_ncdiff()
+    # compare_ncdiff()
 
     #extra_plots()
     #compare_results()
@@ -3564,4 +3699,4 @@ if __name__ == "__main__":
     #                                '2025-03-30T164056_exp6_strat_no_F_cooling_m100_xstress_0p1',
     #                                'roms_frc.nc'))
 
-    copy_selected_images_to_thesis_folder()
+    # copy_selected_images_to_thesis_folder()

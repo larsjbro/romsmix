@@ -1543,7 +1543,7 @@ def compute_entrainment_rate(mld, time_days):
     return entr
 
 
-def plot_density_hovmuller(romsfile, filename=None, MLD=False, maxdensity=-1):
+def plot_density_hovmuller(romsfile, filename=None, MLD=True, maxdensity=-1):
     """
     Open history files and plot Hovmuller density profiles,
     optionally with MLD line.
@@ -1576,11 +1576,9 @@ def plot_density_hovmuller(romsfile, filename=None, MLD=False, maxdensity=-1):
     ER = False
     if MLD:
         mld_rho = compute_mld_density(f, i=7, j=6, drho_crit=0.03)
-        if ER:
-            entr_rho = compute_entrainment_rate(mld_rho, otime)
-
+    if MLD and ER:
+        entr_rho = compute_entrainment_rate(mld_rho, otime)
         # Open figure
-
         fig, (ax1, ax2) = plt.subplots(
             2, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF), sharex=True
         )
@@ -1623,16 +1621,16 @@ def plot_density_hovmuller(romsfile, filename=None, MLD=False, maxdensity=-1):
 
     # --- Plot MLD line ---
     if MLD:
-        ax1.plot(otime, mld_rho, "r-", linewidth=2, label="Density MLD")
+        ax1.plot(otime, mld_rho, "r-", linewidth=2, label="MLD")
 
-        ax1.legend()
+        ax1.legend(framealpha=0.4)
     if MLD and ER:
         ax2.plot(otime, entr_rho, "r-", label="dMLD/dt (density)")
 
         ax2.axhline(0, color="k", linewidth=1)
         ax2.set_ylabel("Entrainment rate [m/day]")
         ax2.set_xlabel("Days")
-        ax2.legend()
+        ax2.legend(framealpha=0.4)
 
         # plt.plot(otime, mld_rho, 'r-', linewidth=2,
         #          label=r'MLD ($\Delta\rho = 0.03$ kg m$^{-3}$)')
@@ -1737,6 +1735,8 @@ def plot_speed_hovmuller(romsfile, filename=None):
     # Get vertical coordinate
     z_r = f.variables["z_rho"][:, :, 7, 6]
 
+    mld = compute_mld_density(f)
+
     # Get u,v
     u = f.variables["u"][:, :, 7, 6]  # N X M
     v = f.variables["v"][:, :, 7, 6]  # N X M
@@ -1763,6 +1763,8 @@ def plot_speed_hovmuller(romsfile, filename=None):
 
     # Add info
     plt.colorbar(label="Speed [m/s]")
+    plt.plot(otime, mld, "-", color="magenta", label="MLD")
+    plt.legend(framealpha=0.4)
     plt.ylim([PLOT_DEPTH_MAX, 0])
     plt.ylabel("Depth [m]")
     plt.grid(axis="x")
@@ -1797,6 +1799,8 @@ def plot_velocity_hovmuller(
     # z = np.arange(u.shape[1])
     z = f.variables["z_rho"][0, :, 7, 6]
 
+    mld = compute_mld_density(f)
+
 
     # Theoretical Inertial Period calculation for 60 degrees North
     # ~13.8 hours
@@ -1815,8 +1819,10 @@ def plot_velocity_hovmuller(
         otime, z, plot_u.T, cmap="RdBu_r",
         shading="auto", vmin=-velmax, vmax=velmax
     )
+    ax1.plot(otime, mld, "-", color="magenta", label="MLD")
     ax1.set_ylabel("Depth [m]", fontsize=10)
     ax1.set_title("u-Velocity Component", fontsize=12)
+    fig.legend(framealpha=0.4)
     cbar_obj = fig.colorbar(mesh1, ax=ax1, label="cm/s")
     custom_ticks = [-20, -10, 0, 10, 20]
     cbar_obj.set_ticks(custom_ticks)
@@ -1833,6 +1839,7 @@ def plot_velocity_hovmuller(
         otime, z, plot_v.T, cmap="RdBu_r",
         shading="auto", vmin=-velmax, vmax=velmax
     )
+    ax2.plot(otime, mld, "-", color="magenta", label="MLD")
     ax2.set_ylabel("Depth [m]", fontsize=10)
     ax2.set_xlabel("Days", fontsize=10)
     ax2.set_title("v-Velocity Component", fontsize=12)
@@ -3228,8 +3235,7 @@ def plot_sst_evolution(
     plt.xlabel("Days")
     plt.ylabel("Temperature [°C]")
     plt.grid(True, linestyle="--", alpha=0.7)
-    plt.legend()
-
+    plt.legend(framealpha=0.4)
     # Manually setting ticks to 0-7
     plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
     plt.xlim(-0.5, 7.5)  # Adjust limits to comfortably display the 0-7 range
@@ -3424,10 +3430,10 @@ def plots():
         # plot_conservative_temp(romsfile, out("conservative_temp"))
         # plot_sst_evolution(romsfile, out("sst_evolution"))
 
-        # plot_density_hovmuller(romsfile, out("density_hovmuller"))
-        # plot_density_hovmuller(romsfile, out("density_hovmuller_mld"), MLD=True)
+
+        plot_density_hovmuller(romsfile, out("density_hovmuller"))
         # plot_speed_hovmuller(romsfile, out("speed_hovmuller"))
-        plot_velocity_hovmuller(romsfile, out("velocity_hovmuller"))
+        # plot_velocity_hovmuller(romsfile, out("velocity_hovmuller"))
         # plot_absolute_salinity(romsfile, out("absolute_salinity"))
         # plot_tke_hovmuller(romsfile, out("tke_hovmuller"))
         # compute_mixed_layer_shear_stats(
@@ -4132,8 +4138,8 @@ if __name__ == "__main__":
     # make_summary()
     # create_summary_tables()
 
-    # plots()
-    plot_forcing_comparison()
+    plots()
+    # plot_forcing_comparison()
 
     # compare_ncdiff()
 

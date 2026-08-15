@@ -13,6 +13,7 @@ import pandas as pd
 import xarray as xr  # used in get_latlon()
 from matplotlib import (
     cm,
+    colors,
     patheffects,  # <-- THIS is required
 )
 from matplotlib import pyplot as plt
@@ -34,12 +35,12 @@ NANOSEC_PER_SECOND = 1e9
 
 PLOT_DEPTH_MAX = -60
 
-# Standard width for a single column in a thesis is ~3.3 inches (approx 8.5 cm)
+# Standard width for a single column in a thesis is ~3.3 inches
 # The height is set using the golden ratio for a pleasing aesthetic
 FIG_WIDTH_HALF = 3.3
-FIG_HEIGTH_HALF = FIG_WIDTH_HALF * 0.618
+FIG_HEIGHT_HALF = FIG_WIDTH_HALF * 0.618
 FIG_WIDTH_FULL = 2 * FIG_WIDTH_HALF
-FIG_HEIGTH_FULL = FIG_WIDTH_FULL * 0.618
+FIG_HEIGHT_FULL = FIG_WIDTH_FULL * 0.618
 
 
 # -------------------------------------------------------------
@@ -66,7 +67,7 @@ DIURNAL_EXPERIMENT_NO = {
     (100, 10): 53,
     (100, 15): 54,
 }
-STABLE_EXPERIMENT_NO = {
+AVG_EXPERIMENT_NO = {
     ("0.0", 5): 31,
     ("0.0", 10): 29,
     ("0.0", 15): 33,
@@ -90,7 +91,7 @@ STABLE_EXPERIMENT_NO = {
 # For thesis only:
 # renumber diurnal experiments from 1 to 9
 # renumber non-diurnal experiments from 11 to 19
-NEW_EXPERIMENT_ID_TO_CLOUD_WIND = {
+NEW_EXPERIMENT_ID2CLOUD_WIND = {
     1: (0, 5),
     2: (0, 10),
     3: (0, 15),
@@ -187,7 +188,7 @@ def computestats(data, return_state=True):
 # -------------------------------------------------------------
 def get_inertial_period_hours(lat_deg: float) -> float:
     """
-    Compute the theoretical inertial period (in hours) at a given latitude.
+    Return theoretical inertial period (in hours) at a given latitude.
 
     Parameters
     ----------
@@ -214,6 +215,35 @@ def get_inertial_period_hours(lat_deg: float) -> float:
     return (2 * np.pi / f_coriolis) / 3600.0
 
 
+def compute_vertical_shear(u, v, z):
+    """
+    Compute vertical shear magnitude S^2 = (du/dz)^2 + (dv/dz)^2.
+
+    Parameters
+    ----------
+    u : ndarray
+        Zonal velocity with shape (nt, nz)
+    v : ndarray
+        Meridional velocity with same shape as u.
+    z : ndarray
+        Vertical coordinate (depths), shape (nz,).
+
+    Returns
+    -------
+    shear2 : ndarray
+        Vertical shear magnitude squared, same shape as u and v.
+    """
+
+    # Vertical gradients
+    du_dz = np.gradient(u, z, axis=1)
+    dv_dz = np.gradient(v, z, axis=1)
+
+    # Shear magnitude squared
+    shear2 = du_dz**2 + dv_dz**2
+
+    return shear2
+
+
 def gradient_richardson_number(rho, u, v, z, g=9.81, rho0=1025):
     """
     Compute gradient Richardson number.
@@ -233,22 +263,18 @@ def gradient_richardson_number(rho, u, v, z, g=9.81, rho0=1025):
 
     Returns
     -------
-    Ri_g : array (nt, nz-1)
+    Ri_g : array (nt, nz)
         Gradient Richardson number
     """
-
-    # Vertical derivatives
-    drho_dz = np.gradient(rho, z, axis=1)
-    du_dz = np.gradient(u, z, axis=1)
-    dv_dz = np.gradient(v, z, axis=1)
-
-    # Buoyancy frequency
-    N2 = -(g / rho0) * drho_dz  # Brunt Väisala
-
     # Vertical shear
-    shear2 = du_dz**2 + dv_dz**2
+    shear2 = compute_vertical_shear(u, v, z)
     # Avoid division by zero
     shear2[shear2 == 0] = np.nan
+
+    # Vertical derivative
+    drho_dz = np.gradient(rho, z, axis=1)
+    # Buoyancy frequency
+    N2 = -(g / rho0) * drho_dz  # Brunt Väisala
 
     return N2 / shear2
 
@@ -259,7 +285,7 @@ def gradient_richardson_number(rho, u, v, z, g=9.81, rho0=1025):
 def get_sst(f):
     """Extract SST from ROMS file."""
 
-    # Extracting temperature at the surface (index -1) for coordinates 7, 6
+    # Extracting temperature at the surface (index -1) for coord. 7, 6
     # temp variable is typically [time, s_rho, eta_rho, xi_rho]
     return f.variables["temp"][:, -1, 7, 6]
 
@@ -369,7 +395,9 @@ def mixing_regime_summary(romsfile, tke_threshold=1e-6):
 # CSV + LaTeX Table Generation
 # -------------------------------------------------------------
 def csv_to_latex_matrix(
-    csv_file, caption="3x3 Mixing Regime Matrix", label="tab:mixing_matrix"
+    csv_file,
+    caption="3x3 Mixing Regime Matrix",
+    label="tab:mixing_matrix"
 ):
     """
     Create a LaTeX 3x3 matrix matching the experiment grid.
@@ -520,7 +548,7 @@ def create_summary_tables():
     summary = {}
     for diurnal in [True, False]:
         experiment_no = (
-            DIURNAL_EXPERIMENT_NO if diurnal else STABLE_EXPERIMENT_NO
+            DIURNAL_EXPERIMENT_NO if diurnal else AVG_EXPERIMENT_NO
         )
         # Loop through 3x3 grid
         for wind in winds:
@@ -560,7 +588,7 @@ def make_mld_table(summary):
             summary_diurnal = summary[(True, cloud, wind)]
             summary_nondiurnal = summary[(False, cloud, wind)]
             id1 = NEW_EXPERIMENT_ID[DIURNAL_EXPERIMENT_NO[(cloud, wind)]]
-            id2 = NEW_EXPERIMENT_ID[STABLE_EXPERIMENT_NO[(cloud, wind)]]
+            id2 = NEW_EXPERIMENT_ID[AVG_EXPERIMENT_NO[(cloud, wind)]]
             mean1 = -summary_diurnal["mld_stats"]["mean"]
             mean2 = -summary_nondiurnal["mld_stats"]["mean"]
             print(
@@ -580,7 +608,7 @@ def make_sst_table(summary):
             summary_diurnal = summary[(True, cloud, wind)]
             summary_nondiurnal = summary[(False, cloud, wind)]
             id1 = NEW_EXPERIMENT_ID[DIURNAL_EXPERIMENT_NO[(cloud, wind)]]
-            id2 = NEW_EXPERIMENT_ID[STABLE_EXPERIMENT_NO[(cloud, wind)]]
+            id2 = NEW_EXPERIMENT_ID[AVG_EXPERIMENT_NO[(cloud, wind)]]
             mean1 = summary_diurnal["sst_stats"]["mean"]
             mean2 = summary_nondiurnal["sst_stats"]["mean"]
             print(
@@ -600,7 +628,7 @@ def make_fraction_unstable_table(summary):
             summary_diurnal = summary[(True, cloud, wind)]
             summary_nondiurnal = summary[(False, cloud, wind)]
             id1 = NEW_EXPERIMENT_ID[DIURNAL_EXPERIMENT_NO[(cloud, wind)]]
-            id2 = NEW_EXPERIMENT_ID[STABLE_EXPERIMENT_NO[(cloud, wind)]]
+            id2 = NEW_EXPERIMENT_ID[AVG_EXPERIMENT_NO[(cloud, wind)]]
             mean1 = 100 * summary_diurnal["unstable_fraction"]
             mean2 = 100 * summary_nondiurnal["unstable_fraction"]
             print(
@@ -625,7 +653,7 @@ def create_3x3_mixing_summary_csv(csv_name="mixing_summary.csv", diurnal=True):
     winds = [5, 10, 15]
     clouds = [0.0, 0.5, 1.0]
 
-    experiment_no = DIURNAL_EXPERIMENT_NO if diurnal else STABLE_EXPERIMENT_NO
+    experiment_no = DIURNAL_EXPERIMENT_NO if diurnal else AVG_EXPERIMENT_NO
 
     num = experiment_no[("1.0", 15)]
     result_folder = os.path.join(
@@ -1107,7 +1135,7 @@ def plot_density_difference_hovmuller(file1, file2, filename=None):
     ).transpose()
 
     # 5. Create the Plot
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
 
     # Use a diverging colormap (RdBu_r) so that 0 (no difference) is white
     # Red indicates file1 is denser; Blue indicates file1 is lighter
@@ -1146,6 +1174,63 @@ def plot_density_difference_hovmuller(file1, file2, filename=None):
     f2.close()
 
 
+def plot_shear_hovmuller(romsfile, filename=None):
+    # Open history file
+    f = Dataset(romsfile, "r")
+    mld = compute_mld_density(f, i=7, j=6, drho_crit=0.03, return_index=False)
+    # Extract vertical coordinate at a single point
+    z_rho = f.variables["z_rho"][:, :, 7, 6]
+
+    # Extract density, u, v at same point
+    rho = f.variables["rho"][:, :, 7, 6]
+    u = f.variables["u"][:, :, 7, 6]
+    v = f.variables["v"][:, :, 7, 6]
+
+    # Extract time and convert to days
+    otime = f.variables["ocean_time"][:]
+    otime = otime / SEC_PER_DAY
+    nz = np.shape(rho)[1]
+    dt = np.array([otime] * nz).transpose()
+
+    # Compute vertical gradients
+    z = z_rho[0, :]
+
+    shear2 = compute_vertical_shear(u, v, z)
+    shear2[shear2<1e-8] = np.nan
+
+
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
+
+    # Logarithmic color scale
+    pcm = plt.pcolormesh(
+        dt, z_rho, shear2,
+        norm=colors.LogNorm(vmin=1e-8, vmax=1e-2),
+        cmap="magma",
+        shading="auto"
+    )
+
+    plt.plot(otime, mld, "-", color="magenta", label="MLD")
+
+    cbar = plt.colorbar(pcm, label=r"$S^2\ \mathrm{[s^{-2}]}$")
+    cbar.set_ticks([1e-8, 1e-6, 1e-4, 1e-2])
+    cbar.set_ticklabels([r"$10^{-8}$", r"$10^{-6}$", r"$10^{-4}$", r"$10^{-2}$"])
+
+    plt.ylim([PLOT_DEPTH_MAX, 0])
+    plt.ylabel("Depth [m]")
+    plt.grid(axis="x")
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.xlim((-0.5, 7.5))
+    plt.xlabel("Days")
+    plt.legend(loc="lower left", framealpha=0.4)
+
+    # Save or show
+    if filename:
+        plt.savefig(filename, dpi=300, bbox_inches="tight")
+        plt.close()
+
+    f.close()
+
+
 def plot_Ri_hovmuller(romsfile, filename=None):
     # Open history file
     f = Dataset(romsfile, "r")
@@ -1161,20 +1246,15 @@ def plot_Ri_hovmuller(romsfile, filename=None):
     # Extract time and convert to days
     otime = f.variables["ocean_time"][:]
     otime = otime / SEC_PER_DAY
-    ny = np.shape(rho)[1]
-    dt = np.array(
-        [
-            otime,
-        ]
-        * ny
-    ).transpose()
+    nz = np.shape(rho)[1]
+    dt = np.array([otime,]* nz).transpose()
 
     # Compute vertical gradients
     z = z_rho[0, :]
     Ri = gradient_richardson_number(rho, u, v, z, g=9.81, rho0=1025)
 
     # Open figure
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
 
     # ["Convective", "Shear", "Stable"]
     # ["R_i<0", "0 <= R_i < 0.25$)", "R_i >= 0.25"]
@@ -1273,7 +1353,7 @@ def plot_stability_hovmuller(
         cmap = ListedColormap(["blue", "yellow", "red"])
 
     # Open figure
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
 
     # Plot categorical Hovmöller
     plt.pcolormesh(dt, z_rho, stability, cmap=cmap, shading="auto")
@@ -1332,7 +1412,7 @@ def plot_tke_stability_hovmuller(romsfile, filename=None):
     dt = np.array([otime] * nz).transpose()  # (nt, nz)
     dt_tke = np.array([otime] * (nz + 1)).transpose()
     # --- Open figure ---
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
 
     # --- Background: TKE contourf (log-scale) ---
     levels_tke = list(range(-20, 1, 2))
@@ -1401,7 +1481,7 @@ def plot_tke_hovmuller(romsfile, filename=None):
     ).transpose()
 
     # Open figure
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
 
     # Plot filled contours
 
@@ -1468,7 +1548,7 @@ def plot_tke_difference_hovmuller(file1, file2, filename=None):
     tke_diff = np.log(tke1) - np.log(tke2)
 
     # 6. Create the Plot
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
 
     # Diverging colormap: Red = Faster in File 1, Blue = Slower in File 1
     limit = np.max(np.abs(tke_diff))
@@ -1580,11 +1660,11 @@ def plot_density_hovmuller(romsfile, filename=None, MLD=True, maxdensity=-1):
         entr_rho = compute_entrainment_rate(mld_rho, otime)
         # Open figure
         fig, (ax1, ax2) = plt.subplots(
-            2, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF), sharex=True
+            2, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF), sharex=True
         )
     else:
         fig, ax1 = plt.subplots(
-            1, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF), sharex=True
+            1, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF), sharex=True
         )
 
     print(np.shape(dt))
@@ -1689,7 +1769,7 @@ def plot_speed_difference_hovmuller(file1, file2, filename=None):
     ).transpose()
 
     # 6. Create the Plot
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
 
     # Diverging colormap: Red = Faster in File 1, Blue = Slower in File 1
     limit = int(np.max(np.abs(speed_diff)))
@@ -1756,7 +1836,7 @@ def plot_speed_hovmuller(romsfile, filename=None):
     ).transpose()  # LJB
 
     # Open figure
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
 
     levels = 51
     plt.contourf(dt, z_r, speed, levels=levels)  # LJB
@@ -1808,7 +1888,7 @@ def plot_velocity_hovmuller(
     inertial_period_days = inertial_period_hours / 24.0
 
     fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(FIG_WIDTH_FULL, FIG_HEIGTH_FULL), sharex=True
+        2, 1, figsize=(FIG_WIDTH_FULL, FIG_HEIGHT_FULL), sharex=True
     )
     velmax = np.round(max(np.max(np.abs(u)), np.max(np.abs(v))), decimals=1)
     velmax = 30  # cm/s
@@ -1884,7 +1964,7 @@ def plot_hodograph(romsfile, savefile=False, ext=".png"):
     N = len(romsfile)
 
     # Plot hodograph
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
 
     for i in range(N):
         # Open history files and plot profiles
@@ -2147,7 +2227,7 @@ def plot_heat_flux_evolution(
     heat_content = cumulative_trapezoid(qnet, x=otime * SEC_PER_DAY, initial=0)
 
     fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF), sharex=True
+        2, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF), sharex=True
     )
 
     # Top Panel: Time-Series of Qnet
@@ -2346,7 +2426,7 @@ def plot_thermodynamic_fluxes(his_file: str, frc_file: str, filename: str = ""):
         print(f"Debug: Error type was {type(e)}")
 
 
-def calculate_model_heat_stats_2D_with_boundary(ds_his, rho0=1025.0, Cp=3985.0):
+def surface_heat_content_2D_with_boundary(ds_his, rho0=1025.0, Cp=3985.0):
     """
     Calculates total heat content change and the rate of change from ROMS
     history data.
@@ -2407,7 +2487,80 @@ def calculate_model_heat_stats_2D_with_boundary(ds_his, rho0=1025.0, Cp=3985.0):
     return heat_content_per_m2.assign_coords(ocean_time=his_days), rate_da
 
 
-def calculate_forcing_heat_stats_2D_with_boundary(ds_his):
+def surface_heat_content_2D_interior(ds_his, rho0=1025.0, Cp=3985.0):
+    """
+    Calculates total heat content change and rate of change
+    using ONLY the interior cells (slice(1, -1)), matching
+    surface_heat_input_2D_interior.
+    """
+
+    # --- Time handling ---
+    his_sec, his_days = robust_time_conversion(ds_his["ocean_time"])
+    dt_his = np.mean(np.diff(his_sec))
+
+    # --- Interior area (same as forcing) ---
+    area_full = 1.0 / (ds_his["pm"] * ds_his["pn"])
+    area_interior = area_full.isel(
+        eta_rho=slice(1, -1),
+        xi_rho=slice(1, -1)
+    )
+    total_area_interior = area_interior.sum().item()
+
+    # --- Layer thickness (Hz) ---
+    z_w = ds_his["z_w"]
+    Hz = z_w.diff(dim="s_w").rename({"s_w": "s_rho"})
+
+    # Restrict Hz to interior
+    Hz_interior = Hz.isel(
+        eta_rho=slice(1, -1),
+        xi_rho=slice(1, -1)
+    )
+
+    # --- Volume = Hz * area ---
+    volume_interior = Hz_interior * area_interior
+
+    # --- Temperature anomaly ---
+    temp = ds_his["temp"].isel(
+        eta_rho=slice(1, -1),
+        xi_rho=slice(1, -1)
+    )
+    initial_temp = temp.isel(ocean_time=0, drop=True)
+    temp_anomaly = temp - initial_temp
+
+    # Align volume with temp dims
+    volume_aligned = xr.DataArray(
+        volume_interior.values,
+        coords=temp.coords,
+        dims=temp.dims
+    )
+
+    # --- Total heat content (J) ---
+    total_heat_joules = (
+        rho0 * Cp * temp_anomaly * volume_aligned
+    ).sum(dim=["s_rho", "eta_rho", "xi_rho"])
+
+    # --- Normalize per m² (interior area) ---
+    heat_content_per_m2 = total_heat_joules / total_area_interior
+
+    # --- Heat rate (W/m²) ---
+    rate_of_change_watts = np.diff(total_heat_joules.values) / dt_his
+    rate_of_change_per_m2 = rate_of_change_watts / total_area_interior
+
+    # Midpoints for rate time axis
+    time_midpoints = (
+        his_sec[:-1] + dt_his / 2.0
+    ) / SEC_PER_DAY
+
+    rate_da = xr.DataArray(
+        rate_of_change_per_m2,
+        coords=[("ocean_time", time_midpoints)]
+    )
+
+    return heat_content_per_m2, rate_da
+
+
+
+def surface_heat_input_2D_with_boundary(ds_his):
     """
     Calculates integrated forcing flux and cumulative heat input from
     history data, including versions normalized per unit area (m^2).
@@ -2446,155 +2599,86 @@ def calculate_forcing_heat_stats_2D_with_boundary(ds_his):
     ), cumulative_per_m2.assign_coords(ocean_time=his_days)
 
 
-def calculate_model_heat_stats_single_point(ds_his, rho0=1025.0, Cp=3985.0):
+def surface_heat_content_single_point(ds_his, rho0=1025.0, Cp=3985.0):
     """
-    Calculates heat content change and rate of change per unit area (m^2).
+    Compute heat-content anomaly (J/m^2) and its rate of change (W/m^2)
+    at a single representative grid cell (6,7), assuming a uniform grid.
 
-    Parameters
-    ----------
-    ds_his : xarray dataset
-        ROMS history data
-    rho0 : real scalar default 1025.0
-        Reference density of seawater (kg/m^3)
-    Cp : real scalar, default 3985.0
-        Specific heat of seawater (J/(kg*K))
-
-    Notes
-    -----
-    Low accuracy since it uses a single point (6,7) and scales up.
+    Returns
+    -------
+    heat_content_per_m2 : xr.DataArray
+        Vertically integrated heat-content anomaly per unit area (J/m^2).
+    heat_content_rate : xr.DataArray
+        Time derivative of heat content per unit area (W/m^2).
     """
+
+    # --- Extract fields ---
     temp = ds_his["temp"]
-    pm = ds_his["pm"]
-    pn = ds_his["pn"]
     z_w = ds_his["z_w"]
 
-    # 1. Time handling
     his_sec, his_days = robust_time_conversion(ds_his["ocean_time"])
-    dt_his = np.mean(np.diff(his_sec))
 
-    # 1. Grid Area
-    # area0 = 1.0 / (ds_his["pm"] * ds_his["pn"])
-    # total_area0 = area0.sum(dim=["eta_rho", "xi_rho"]).item()
-
-    # 2. Calculate area and total area
-    # pm and pn are 1/dx and 1/dy
-    try:
-        cell_area = 1.0 / (
-            pm.isel(eta_rho=6, xi_rho=7).item()
-            * pn.isel(eta_rho=6, xi_rho=7).item()
-        )
-        total_area = cell_area * (len(ds_his.eta_rho) * len(ds_his.xi_rho))
-        # Area of a single cell
-        # cell_area = 1.0 / (pm * pn)
-        # Total horizontal area (Area * # cells in eta and xi directions)
-        # total_area = cell_area.sum(dim=['eta_rho', 'xi_rho'])
-    except Exception:
-        print(
-            "Advarsel: Grid-variablene pm/pn har uventede dimensjoner. "
-            "Bruker standard 1x1 areal."
-        )
-        cell_area = 1.0
-        total_area = 1.0 * (len(ds_his.eta_rho) * len(ds_his.xi_rho))
-
-    # 3. Calculate Volume (Hz * cell_area)
+    # --- Vertical layer thickness at the single point ---
     Hz = z_w.diff(dim="s_w").rename({"s_w": "s_rho"})
-    volume_per_layer_aligned = xr.DataArray(
-        Hz.values * cell_area, coords=temp.coords, dims=temp.dims
-    )
+    Hz_point = Hz.isel(eta_rho=6, xi_rho=7, drop=True)
 
-    # 4. Calculate Total Heat Content (J) and normalize by area
-    initial_temp = temp.isel(ocean_time=0, drop=True)
-    temp_anomaly = temp - initial_temp
-    heat_content_per_cell = rho0 * Cp * temp_anomaly * volume_per_layer_aligned
+    # --- Temperature anomaly at the single point ---
+    temp_point = temp.isel(eta_rho=6, xi_rho=7)
+    initial_temp = temp_point.isel(ocean_time=0, drop=True)
+    temp_anomaly = temp_point - initial_temp
 
-    # Integrated total (J)
-    total_heat_content = heat_content_per_cell.sum(
-        dim=["eta_rho", "xi_rho", "s_rho"]
-    )
-    # Normalize to J/m^2
-    heat_content_per_m2 = total_heat_content / total_area
+    # Align vertical coordinates to avoid silent broadcast issues
+    Hz_point = Hz_point.assign_coords(s_rho=temp_anomaly.s_rho)
+
+    # --- Heat-content anomaly per unit area (J/m^2) ---
+    heat_content_per_m2 = (rho0 * Cp * temp_anomaly * Hz_point).sum(dim="s_rho")
     heat_content_per_m2 = heat_content_per_m2.assign_coords(ocean_time=his_days)
 
-    # 5. Calculate Rate of Change (W) and normalize by area
-    # (diff(J) / dt) results in Watts
-    rate_of_change_total = np.diff(total_heat_content.values) / dt_his
-    # Normalize to W/m^2
-    rate_of_change_per_m2 = rate_of_change_total / total_area
-
-    time_midpoints_days = (
-        his_sec[:-1] + (dt_his / 2.0)
-    ) / SEC_PER_DAY  # (24.0 * 3600.0)
-    rate_of_change_da = xr.DataArray(
-        rate_of_change_per_m2, coords=[("ocean_time", time_midpoints_days)]
+    # Note better accuracy:
+    heat_content_derivative = np.gradient(
+        heat_content_per_m2.values,
+        his_sec,
+        edge_order=1,
+    )
+    heat_content_rate = xr.DataArray(
+        heat_content_derivative,
+        coords=[("ocean_time", his_days.values)]
     )
 
-    return heat_content_per_m2, rate_of_change_da
+    return heat_content_per_m2, heat_content_rate
 
 
-def calculate_forcing_heat_stats_single_point(ds_his):
+def surface_heat_input_single_point(ds_his):
     """
-    Calculates integrated forcing flux and cumulative heat input
-    from history data, including versions normalized per unit area (m^2).
+    Return surface heat flux (W/m^2) and integrated surface heat flux (J/m^2)
+    at a single representative grid cell (6,7), assuming a uniform grid.
 
-    Notes
-    -----
-    Low accurracy because a single point (6,7) is scaled up
+    Returns
+    -------
+    surface_heat_flux : xr.DataArray
+        Surface heat flux (W/m^2).
+    integrated_surface_heat_flux : xr.DataArray
+        Time integrated surface heat flux (J/m^2).
+
     """
 
+    # --- Time handling ---
     his_sec, his_days = robust_time_conversion(ds_his["ocean_time"])
-    pm = ds_his["pm"]
-    pn = ds_his["pn"]
+    dt = np.mean(np.diff(his_sec))
 
-    cell_area = 1.0 / (
-        pm.isel(eta_rho=6, xi_rho=7).item()
-        * pn.isel(eta_rho=6, xi_rho=7).item()
-    )
-    # 1. Coordinate and dimension handling
-    num_eta = len(ds_his.eta_rho)
-    num_xi = len(ds_his.xi_rho)
-    total_area = cell_area * (num_eta * num_xi)
-
-    # 2. Extract components
-    # (using the same representative cell as your original code)
-    # Determine Net Heat Flux
-    # Note: 'shflux' in ROMS history files often represents the net
-    # surface heat flux
-    net_flux = (
+    # --- Surface heat exchange at the representative cell ---
+    surface_heat_flux = (
         ds_his["shflux"]
         .isel(eta_rho=6, xi_rho=7)
         .assign_coords(ocean_time=his_days)
     )  # W/m^2
 
-    # 4. Calculate Time Step
-    dt = (
-        np.mean(np.diff(his_sec))
-        if len(his_sec) > 1
-        else (his_sec[1] - his_sec[0])
-    )
-
-    # 5. Integrated Flux (Total and Per Area)
-
-    # Total integrated flux (Watts)
-    forcing_flux_sum = (net_flux * total_area).fillna(0.0)
-    forcing_flux_sum = forcing_flux_sum.assign_coords(ocean_time=his_days)
-
-    # Integrated flux per area (W/m^2)
-    # This represents the average energy density entering the ocean surface
-    forcing_flux_per_area = forcing_flux_sum / total_area
-
-    # 6. Cumulative Heat Input (Total and Per Area)
-    # Total cumulative input (Joules)
-    cumulative_forcing_input = (forcing_flux_sum * dt).cumsum(dim="ocean_time")
-
-    # Cumulative input per area (J/m^2)
-    # This is the total energy accumulated per square meter over time
-    cumulative_input_per_area = cumulative_forcing_input / total_area
-
-    # return forcing_flux_sum, cumulative_forcing_input,
-    return forcing_flux_per_area, cumulative_input_per_area
+    # --- Integrated surface heat input (J/m^2) ---
+    integrated_surface_heat_flux = (surface_heat_flux * dt).cumsum(dim="ocean_time")
+    return surface_heat_flux, integrated_surface_heat_flux
 
 
-def calculate_forcing_heat_stats_2D_interior(ds_his):
+def surface_heat_input_2D_interior(ds_his):
     """
     Calculates integrated forcing flux and cumulative heat input
     integrating over the INTERIOR cells only (skipping the outer boundary).
@@ -2635,110 +2719,176 @@ def calculate_forcing_heat_stats_2D_interior(ds_his):
     ), cumulative_per_m2.assign_coords(ocean_time=his_days)
 
 
-def verify_heat_content(his_file: str, filename: str = ""):
+def surface_heat_input_2D_physical(ds_his):
     """
-    Calculates the total heat content in a ROMS simulation and compares it
-    with the cumulative heat flux input from a forcing file.
+    Corrected forcing integration using ROMS physical-domain mask.
+    Includes boundary cells but excludes ghost cells and land.
+    """
+
+    # --- Time ---
+    his_sec, his_days = robust_time_conversion(ds_his["ocean_time"])
+    dt = np.mean(np.diff(his_sec))
+
+    # --- Physical mask (1 = ocean, 0 = land/ghost) ---
+    mask = ds_his["mask_rho"]
+
+    # --- Area ---
+    area = 1.0 / (ds_his["pm"] * ds_his["pn"])
+    area_phys = area.where(mask == 1)
+
+    total_area = area_phys.sum().item()
+
+    # --- Surface flux ---
+    net_flux = ds_his["shflux"].where(mask == 1)
+
+    # --- Total forcing (Watts) ---
+    total_forcing_watts = (net_flux * area_phys).sum(dim=["eta_rho", "xi_rho"])
+
+    # --- Cumulative energy (J) ---
+    cumulative_heat_joules = (total_forcing_watts * dt).cumsum(dim="ocean_time")
+
+    # --- Normalize ---
+    forcing_per_m2 = total_forcing_watts / total_area
+    cumulative_per_m2 = cumulative_heat_joules / total_area
+
+    return (
+        forcing_per_m2.assign_coords(ocean_time=his_days),
+        cumulative_per_m2.assign_coords(ocean_time=his_days)
+    )
+
+
+def verify_heat_content(
+        his_file: str,
+        filename: str = "",
+        filename2: str ="",
+) -> None:
+    """
+    Calculates the total heat content in ROMS simulation and compares
+    it with the cumulative heat flux input from a forcing file.
     """
     try:
         ds_his = xr.open_dataset(his_file)
 
-        # 1. Calculate Model Side
-        model_heat_change, model_heat_rate = (
-            calculate_model_heat_stats_2D_with_boundary(ds_his)
+        # 1. Vertically integrated heat content and its derivative
+        # heat_content_per_m2, heat_content_rate = (
+        #     surface_heat_content_2D_interior(ds_his)
+        # )
+        heat_content_per_m2, heat_content_rate = (
+            surface_heat_content_single_point(ds_his)
         )
+        # heat_content_per_m2, heat_content_rate = (
+        #     surface_heat_content_2D_with_boundary(ds_his)
+        # )
 
-        # 2. Calculate Forcing Side
-        forcing_flux, cum_forcing = calculate_forcing_heat_stats_2D_interior(
-            ds_his
+        # 2. Compute instantaneous and accumulated surface heat input.
+        surface_heat_flux, integrated_surface_heat_flux = (
+            surface_heat_input_single_point(ds_his)
         )
+        # heat_flux_per_m2, total_heat_input_per_m2 = surface_heat_input_2D_interior(
+        #     ds_his
+        # )
+        # heat_flux_per_m2, total_heat_input_per_m2 = surface_heat_input_2D_physical(
+        #     ds_his
+        # )
 
         # Scale heat content to mega (MJ/m²)
-        model_heat_change = model_heat_change / 1e6
-        cum_forcing = cum_forcing / 1e6
-
+        heat_content_per_m2 = heat_content_per_m2 / 1e6
+        integrated_surface_heat_flux = integrated_surface_heat_flux / 1e6
+        energy_diff = heat_content_per_m2 - integrated_surface_heat_flux
+        pass
         # Compute means
-        mhc_mean = model_heat_change.mean().item()
-        cf_mean = cum_forcing.mean().item()
-        mhr_mean = model_heat_rate.mean().item()
-        ff_mean = forcing_flux.mean().item()
+        mhc_mean = heat_content_per_m2.mean().item()
+        cf_mean = integrated_surface_heat_flux.mean().item()
+        mhr_mean = heat_content_rate.mean().item()
+        ff_mean = surface_heat_flux.mean().item()
 
         # 3. Plotting
-        _fig, axes = plt.subplots(
-            2, 1, figsize=(FIG_HEIGTH_FULL, FIG_HEIGTH_FULL), sharex=True
+        fig1, ax1 = plt.subplots(
+            1, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF), sharex=False
         )
+        fig2, ax2 = plt.subplots(
+                    1, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF), sharex=False
+                )
 
-        model_heat_change.plot(
-            ax=axes[0], label="Model Heat Change"
+        heat_content_per_m2.plot(
+            ax=ax1, label="Model Heat Content", color= "blue"
         )  # , marker='o')
-        cum_forcing.plot(
-            ax=axes[0], label="Cumulative Forcing Input", linestyle="--"
+        integrated_surface_heat_flux.plot(
+            ax=ax1, label="Int. Surface Heat Flux", linestyle="--",
+            color="orange",
         )  # ,marker='x')
         # axes[0].set_title('Total Heat Content vs. Cumulative Flux')
 
         # Add mean lines
-        axes[0].axhline(
-            model_heat_change.mean().item(),
-            color="C0",
-            linestyle=":",
-            label=f"μ(model) = {mhc_mean:.1f}",
-        )  # Mean Model Heat Change
-        axes[0].axhline(
-            cum_forcing.mean().item(),
-            color="C1",
-            linestyle=":",
-            label=f"μ(forcing) = {cf_mean:.1f}",
-        )  #'Mean Cumulative Forcing')
+        # ax1.axhline(
+        #     heat_content_per_m2.mean().item(),
+        #     color="C0",
+        #     linestyle=":",
+        #     label=f"Mean(model) = {mhc_mean:.1f}",
+        # )  # Mean Model Heat Change
+        # ax1.axhline(
+        #     total_heat_input_per_m2.mean().item(),
+        #     color="C1",
+        #     linestyle=":",
+        #     label=f"Mean(forcing) = {cf_mean:.1f}",
+        # )  #'Mean Cumulative Forcing')
 
-        axes[0].legend(framealpha=0.4)
-        axes[0].grid(True)
-        axes[0].set_xticks(np.arange(0, 8, 1))
-        axes[0].set_xticklabels([str(i) for i in range(0, 8)])
-        axes[0].set_ylim(-2, 70)
-        axes[0].set_xlim(
+        ax1.legend(framealpha=0.4)
+        ax1.grid(True)
+        ax1.set_xticks(np.arange(0, 8, 1))
+        ax1.set_xticklabels([str(i) for i in range(0, 8)])
+        ax1.set_ylim(-2, 70)
+        ax1.set_xlim(
             -0.5, 7.5
         )  # Adjusting limits to comfortably display the 0-7 range
-        axes[0].set_xlabel("")
-        axes[0].set_ylabel("Heat Content [$MJ/m^2$]")
+        ax1.set_title("")
+        ax1.set_xlabel("Days")
+        ax1.set_ylabel("Heat Content [$MJ/m^2$]")
 
-        model_heat_rate.plot(
-            ax=axes[1], label="Model Heat Rate"
+
+        heat_content_rate.plot(
+            ax=ax2, label="Model Heat Content Rate"
         )  # , marker='o')
-        forcing_flux.plot(
-            ax=axes[1], label=r"Total Forcing Flux", linestyle="--"
+        surface_heat_flux.plot(
+            ax=ax2, label="Surface Heat Flux", linestyle="--"
         )  # , marker='x')
         # axes[1].set_title('Comparison: Heat Change Rate')
         # axes[1].set_title('Heat Change Rate')
 
         # Add mean lines
-        axes[1].axhline(
-            model_heat_rate.mean().item(),
-            color="C0",
-            linestyle=":",
-            label=f"μ(model) = {mhr_mean:.1f}",
-        )  #  'Mean Model Heat Rate')  #
-        axes[1].axhline(
-            forcing_flux.mean().item(),
-            color="C1",
-            linestyle=":",
-            label=f"μ(forcing) = {ff_mean:.1f}",
-        )  #'Mean Forcing Flux')
+        # ax2.axhline(
+        #     heat_content_rate.mean().item(),
+        #     color="C0",
+        #     linestyle=":",
+        #     label=f"Mean(heat content rate) = {mhr_mean:.1f}",
+        # )  #  'Mean Model Heat Rate')  #
+        # ax2.axhline(
+        #     heat_flux_per_m2.mean().item(),
+        #     color="C1",
+        #     linestyle=":",
+        #     label=f"Mean(heat flux) = {ff_mean:.1f}",
+        # )  #'Mean Forcing Flux')
 
-        axes[1].legend(loc="best", framealpha=0.4)
-        axes[1].grid(True)
-        axes[1].set_xticks(np.arange(0, 8, 1))
-        axes[1].set_xticklabels([str(i) for i in range(0, 8)])
-        axes[1].set_ylim(-200, 650)
-        axes[1].set_xlim(
+        ax2.legend(loc="best", framealpha=0.4)
+        ax2.grid(True)
+        ax2.set_xticks(np.arange(0, 8, 1))
+        ax2.set_xticklabels([str(i) for i in range(0, 8)])
+        ax2.set_ylim(-200, 650)
+        ax2.set_xlim(
             -0.5, 7.5
         )  # Adjusting limits to comfortably display the 0-7 range
-        axes[1].set_ylabel("Heat Flux [$W/m^2$]")
-        axes[1].set_xlabel("Days")
+        ax2.set_title("")
+        ax2.set_ylabel("Heat Flux [$W/m^2$]")
+        ax2.set_xlabel("Days")
 
-        plt.tight_layout()
+        fig1.tight_layout()
+        fig2.tight_layout()
         if filename:
-            plt.savefig(filename, dpi=300, bbox_inches="tight")
-            plt.close()
+            fig1.savefig(filename, dpi=300, bbox_inches="tight")
+            plt.close(fig1)
+        if filename2:
+            fig2.savefig(filename2, dpi=300, bbox_inches="tight")
+            plt.close(fig2)
         # plt.show()
     except FileNotFoundError as e:
         print(f"Error: A required file was not found. {e}")
@@ -2786,32 +2936,32 @@ def compare_heat_content(folders: list[str], filename: str = ""):
             ds_his = xr.open_dataset(his_file)
 
             # 1. Calculate Model Side
-            model_heat_change, model_heat_rate = (
-                calculate_model_heat_stats_2D_with_boundary(ds_his)
+            heat_content_per_m2, heat_content_rate = (
+                surface_heat_content_2D_with_boundary(ds_his)
             )
 
             # 2. Calculate Forcing Side
-            forcing_flux, cum_forcing = (
-                calculate_forcing_heat_stats_2D_interior(ds_his)
+            heat_flux_per_m2, total_heat_input_per_m2 = (
+                surface_heat_input_2D_interior(ds_his)
             )
 
-            model_heat_change.plot(
+            heat_content_per_m2.plot(
                 ax=axes[0],
                 label=f"Model Heat Change exp.nr={exp_num}",
                 marker="o",
             )
-            cum_forcing.plot(
+            total_heat_input_per_m2.plot(
                 ax=axes[0],
                 label=f"Cumulative Forcing Input exp.nr={exp_num}",
                 marker="x",
                 linestyle="--",
             )
-            model_heat_rate.plot(
+            heat_content_rate.plot(
                 ax=axes[1],
                 label=f"Model Heat Rate (W) exp.nr={exp_num}",
                 marker="o",
             )
-            forcing_flux.plot(
+            heat_flux_per_m2.plot(
                 ax=axes[1],
                 label=f"Total Forcing Flux (W) exp.nr={exp_num}",
                 marker="x",
@@ -2839,8 +2989,65 @@ def compare_heat_content(folders: list[str], filename: str = ""):
         print(f"An unexpected error occurred: {e}")
         print(f"Debug: Error type was {type(e)}")
 
-
 def plot_heat_flux_components(his_file: str, filename=None):
+    """
+    Plot surface heat flux components (shortwave, longwave, latent, sensible)
+    and their net sum at a single grid cell (6,7).
+    """
+
+    ds_his = xr.open_dataset(his_file)
+    _, his_days = robust_time_conversion(ds_his["ocean_time"])
+
+    # --- Radiative fluxes ---
+    sw = ds_his["swrad"].isel(eta_rho=6, xi_rho=7).assign_coords(ocean_time=his_days)
+    lw_net = ds_his["lwrad"].isel(eta_rho=6, xi_rho=7).assign_coords(ocean_time=his_days)
+
+    # --- Turbulent fluxes ---
+    latent = (
+        ds_his["latent"].isel(eta_rho=6, xi_rho=7).assign_coords(ocean_time=his_days)
+        if "latent" in ds_his else 0
+    )
+    sensible = (
+        ds_his["sensible"].isel(eta_rho=6, xi_rho=7).assign_coords(ocean_time=his_days)
+        if "sensible" in ds_his else 0
+    )
+
+    # --- Net flux ---
+    net_flux = sw + lw_net + latent + sensible
+
+    # --- Plotting ---
+    plt.figure(figsize=(FIG_WIDTH_FULL, FIG_HEIGHT_FULL))
+
+    plt.plot(his_days, sw, label="Shortwave", color="orange", alpha=0.8)
+    plt.plot(his_days, lw_net, label="Net Longwave", color="red", alpha=0.7)
+    plt.plot(his_days, latent, label="Latent", color="blue", alpha=0.6)
+    plt.plot(his_days, sensible, label="Sensible", color="green", alpha=0.6)
+
+    # Net flux (bold)
+    plt.plot(his_days, net_flux, color="black", linewidth=2.5, label="Net Heat Flux")
+
+    # Heating / cooling shading
+    plt.fill_between(his_days, net_flux, 0, where=(net_flux > 0),
+                     color="#fcae91", alpha=0.4, label="Heating Ocean")
+    plt.fill_between(his_days, net_flux, 0, where=(net_flux < 0),
+                     color="#9ecae1", alpha=0.4, label="Cooling Ocean")
+
+    plt.axhline(0, color="black", linestyle="--", linewidth=1)
+    plt.xlabel("Days")
+    plt.ylabel("Flux [$W/m^2$]")
+    plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+    plt.grid(True, alpha=0.2)
+    plt.tight_layout()
+    plt.xticks(ticks=np.arange(0, 8, 1), labels=[str(i) for i in range(0, 8)])
+    plt.ylim((-200, 800))
+    plt.xlim((-0.5, 7.5))
+
+    if filename:
+        plt.savefig(filename, dpi=300, bbox_inches="tight")
+        plt.close()
+
+
+def plot_heat_flux_components_old(his_file: str, filename=None):
     """
     Plots individual heat flux components and their sum.
     Radiative: From ds_his
@@ -2893,18 +3100,18 @@ def plot_heat_flux_components(his_file: str, filename=None):
     net_flux = sw + lw_net + latent + sensible
 
     # 4. Plotting
-    plt.figure(figsize=(FIG_WIDTH_FULL, FIG_HEIGTH_FULL))
+    plt.figure(figsize=(FIG_WIDTH_FULL, FIG_HEIGHT_FULL))
     plt.plot(
-        his_days, sw, label="Shortwave (Into Water)", color="gold", alpha=0.8
+        his_days, sw, label="Shortwave", color="gold", alpha=0.8
     )
     plt.plot(his_days, lw_net, label="Net Longwave", color="red", alpha=0.7)
     plt.plot(
-        his_days, latent, label="Latent (From History)", color="blue", alpha=0.6
+        his_days, latent, label="Latent", color="blue", alpha=0.6
     )
     plt.plot(
         his_days,
         sensible,
-        label="Sensible (From History)",
+        label="Sensible",
         color="green",
         alpha=0.6,
     )
@@ -2914,7 +3121,7 @@ def plot_heat_flux_components(his_file: str, filename=None):
 
     # Bold Net Flux
     plt.plot(
-        his_days, net_flux, color="black", linewidth=2.5, label="NET HEAT FLUX"
+        his_days, net_flux, color="black", linewidth=2.5, label="Net Heat Flux"
     )
 
     # Shade regions for clarity
@@ -2940,7 +3147,7 @@ def plot_heat_flux_components(his_file: str, filename=None):
     plt.axhline(0, color="black", linestyle="--", linewidth=1)
     # plt.title('Surface Heat Flux Components (Positive = Heating Ocean)')
     plt.xlabel("Days")
-    plt.ylabel("Flux [W/m²]")
+    plt.ylabel("Flux [$W/m^2$]")
     plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
     plt.grid(True, alpha=0.2)
     plt.tight_layout()
@@ -3064,7 +3271,7 @@ def plot_cons_temp_difference_hovmuller(file1, file2, filename=None):
     ).transpose()
 
     # 6. Create the Plot
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
 
     limit = np.max(np.abs(ct_diff))
     limit = max(limit, 0.01)  # Avoid range errors if files are identical
@@ -3149,7 +3356,7 @@ def plot_conservative_temp(romsfile, filename=None):
 
     # Open figure
 
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
     print(np.shape(dt))
     print(np.shape(CT))
     print(np.shape(z_rho))
@@ -3220,7 +3427,7 @@ def plot_sst_evolution(
 
     f.close()
 
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
 
     # Plotting the SST evolution
     plt.plot(
@@ -3279,7 +3486,7 @@ def plot_absolute_salinity(romsfile, filename=None):
 
     # Open figure
 
-    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF))
+    plt.figure(figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF))
     print(np.shape(dt))
     print(np.shape(SA))
     print(np.shape(z_rho))
@@ -3405,7 +3612,7 @@ def plots():
         # new_experiment = NEW_EXPERIMENT_ID[experiment]
 
         new_experiment_no = f"E{new_experiment:02}"
-        cloud_cover, wind = NEW_EXPERIMENT_ID_TO_CLOUD_WIND[new_experiment]
+        cloud_cover, wind = NEW_EXPERIMENT_ID2CLOUD_WIND[new_experiment]
         folder = find_latest_experiment_folder(experiment)
 
         print("")
@@ -3417,13 +3624,18 @@ def plots():
 
         out = make_out(root, ext=".png")
 
+        # plot_shear_hovmuller(romsfile, out("shear_hovmuller"))
         # plot_Ri_hovmuller(romsfile, out("Ri_hovmuller"))
         # plot_stability_hovmuller(romsfile, out("stability_hovmuller"))
         # plot_tke_stability_hovmuller(romsfile, out("tke_stability_hovmuller"))
 
         # plot_hodograph([romsfile], savefile=True)
 
-        # verify_heat_content(romsfile, out("verify_heat_content"))
+        verify_heat_content(
+            romsfile,
+            filename=out("verify_heat_content"),
+            filename2=out("heat_flux"),
+        )
         # # plot_heat_flux_evolution=verify_heat_content
         # plot_heat_flux_evolution(romsfile, out("heat_flux_evolution"))
 
@@ -3431,7 +3643,7 @@ def plots():
         # plot_sst_evolution(romsfile, out("sst_evolution"))
 
 
-        plot_density_hovmuller(romsfile, out("density_hovmuller"))
+        # plot_density_hovmuller(romsfile, out("density_hovmuller"))
         # plot_speed_hovmuller(romsfile, out("speed_hovmuller"))
         # plot_velocity_hovmuller(romsfile, out("velocity_hovmuller"))
         # plot_absolute_salinity(romsfile, out("absolute_salinity"))
@@ -3493,7 +3705,9 @@ def extra_plots():
     # history_file = os.path.join(folder, 'KHC-his.nc-U10_5-cloud_0-swrad_300')
 
     verify_heat_content(
-        history_file, filename=os.path.join(folder, "verify_heat_content.png")
+        history_file,
+        filename=os.path.join(folder, "verify_heat_content.png"),
+        filename2=os.path.join(folder, "heat_flux.png"),
     )
     plot_heat_flux_components(
         history_file, filename=os.path.join(folder, "heat_flux_components.png")
@@ -3553,7 +3767,7 @@ def plot_forcing_comparison():
                 RESULT_FOLDER, find_latest_experiment_folder(num1)
             )
 
-            num2 = STABLE_EXPERIMENT_NO[(cloud_str, wind)]
+            num2 = AVG_EXPERIMENT_NO[(cloud_str, wind)]
             folder2 = os.path.join(
                 RESULT_FOLDER, find_latest_experiment_folder(num2)
             )
@@ -3583,7 +3797,7 @@ def plot_mld_sst_comparison(
     f2.close()
 
     fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGTH_HALF), sharex=True
+        2, 1, figsize=(FIG_WIDTH_HALF, FIG_HEIGHT_HALF), sharex=True
     )
 
     # 1. SST Comparison (The Thermodynamic Response)
@@ -3898,7 +4112,7 @@ def compute_mixed_layer_shear_stats(
     valid_times = np.flatnonzero(~np.isnan(mld_depths))
 
     # Extract vertical coordinate and velocity components
-    z_r = f.variables["z_rho"][:, :, 7, 6]  # shape (nt, nz)
+    z_r = f.variables["z_rho"][0, :, 7, 6]  # shape (nt, nz)
     u = f.variables["u"][:, :, 7, 6]
     v = f.variables["v"][:, :, 7, 6]
 
@@ -3910,10 +4124,12 @@ def compute_mixed_layer_shear_stats(
     # ---------------------------------------------------------------
     # 2. Compute vertical shear magnitude
     # ---------------------------------------------------------------
-    dz = np.abs(np.gradient(z_r, axis=1))
-    dudz = np.gradient(u, axis=1) / (dz + 1e-10)
-    dvdz = np.gradient(v, axis=1) / (dz + 1e-10)
-    shear_mag = np.sqrt(dudz**2 + dvdz**2)
+    shear2 = compute_vertical_shear(u, v, z_r)
+    shear_mag = np.sqrt(shear2)
+    # dz = np.abs(np.gradient(z_r, axis=1))
+    # dudz = np.gradient(u, axis=1) / (dz + 1e-10)
+    # dvdz = np.gradient(v, axis=1) / (dz + 1e-10)
+    # shear_mag = np.sqrt(dudz**2 + dvdz**2)
 
     # Optional smoothing to reduce gradient noise
     if smooth_shear:
@@ -4040,9 +4256,11 @@ def copy_selected_images_to_thesis_folder(
         "hodograph",
         "conservative_temp",
         "heat_flux_components",
+        "heat_flux",
         "mixing_heat_map_diurnal",
         "mixing_heat_map_stable",
         "Ri_hovmuller",
+        "shear_hovmuller",
         "speed_hovmuller",
         "stability_hovmuller",
         "tke_hovmuller",
@@ -4070,7 +4288,7 @@ def copy_selected_images_to_thesis_folder(
     for wind in winds:
         for cloud_cover in cloud_covers:
             # Ensure your lookup dictionary is available here
-            for experiment_no in [DIURNAL_EXPERIMENT_NO, STABLE_EXPERIMENT_NO]:
+            for experiment_no in [DIURNAL_EXPERIMENT_NO, AVG_EXPERIMENT_NO]:
                 num1 = experiment_no[(cloud_cover, wind)]
                 folder1 = os.path.join(
                     RESULT_FOLDER, find_latest_experiment_folder(num1)

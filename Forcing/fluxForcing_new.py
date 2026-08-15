@@ -2601,8 +2601,13 @@ def surface_heat_input_2D_with_boundary(ds_his):
 
 def surface_heat_content_single_point(ds_his, rho0=1025.0, Cp=3985.0):
     """
-    Compute heat-content anomaly (J/m^2) and its rate of change (W/m^2)
-    at a single representative grid cell (6,7), assuming a uniform grid.
+    Compute vertically integrated heat-content anomaly (J/m^2) and its
+    time derivative (W/m^2) at a single grid cell (6,7).
+
+    The calculation assumes:
+    - uniform horizontal grid spacing,
+    - temperature anomaly relative to the initial profile,
+    - vertical layer thickness from z_w.
 
     Returns
     -------
@@ -2664,7 +2669,6 @@ def surface_heat_input_single_point(ds_his):
 
     # --- Time handling ---
     his_sec, his_days = robust_time_conversion(ds_his["ocean_time"])
-    dt = np.mean(np.diff(his_sec))
 
     # --- Surface heat exchange at the representative cell ---
     surface_heat_flux = (
@@ -2674,6 +2678,8 @@ def surface_heat_input_single_point(ds_his):
     )  # W/m^2
 
     # --- Integrated surface heat input (J/m^2) ---
+    #dt = np.mean(np.diff(his_sec))
+    dt = np.gradient(his_sec)
     integrated_surface_heat_flux = (surface_heat_flux * dt).cumsum(dim="ocean_time")
     return surface_heat_flux, integrated_surface_heat_flux
 
@@ -2827,7 +2833,7 @@ def verify_heat_content(
         #     label=f"Mean(model) = {mhc_mean:.1f}",
         # )  # Mean Model Heat Change
         # ax1.axhline(
-        #     total_heat_input_per_m2.mean().item(),
+        #     integrated_surface_heat_flux.mean().item(),
         #     color="C1",
         #     linestyle=":",
         #     label=f"Mean(forcing) = {cf_mean:.1f}",
@@ -2863,7 +2869,7 @@ def verify_heat_content(
         #     label=f"Mean(heat content rate) = {mhr_mean:.1f}",
         # )  #  'Mean Model Heat Rate')  #
         # ax2.axhline(
-        #     heat_flux_per_m2.mean().item(),
+        #     surface_heat_flux.mean().item(),
         #     color="C1",
         #     linestyle=":",
         #     label=f"Mean(heat flux) = {ff_mean:.1f}",
